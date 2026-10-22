@@ -1,0 +1,17 @@
+{
+  "tabelaPrecos": {
+    "toleranciaMinutos": 10,
+    "primeiraHora": 5,
+    "horaAdicional": 5,
+    "fracao15min": 2,
+    "valorDiaria": 50,
+    "limiteHorasDiaria": 8,
+    "modoCobranca": "hora_fracao"
+  },
+  "veiculos": [
+      
+  ],
+  "sessoes": [
+    
+  ]
+}

@@ -1,81 +1,111 @@
-# Protótipo de Cancela Automática com Sensor Ultrassônico e Servo
+# SmartPark RFID - Sistema de Estacionamento Inteligente (PEX 2° Período)
 
-Protótipo em Arduino que simula uma cancela automática: quando um objeto é detectado a menos de 15 cm do sensor ultrassônico, o servo motor abre a cancela e o LED vermelho acende. Sem nenhum objeto por perto, a cancela fecha e o LED verde acende.
+Sistema completo de controle e automação de estacionamento integrando **Arduino** com leitor **RFID MFRC522**, cancela automatizada (Servo Motor), sensor ultrassônico e uma **Aplicação Web moderna** com banco de dados, contagem de tempo cronometrada em tempo real, cálculo tarifário por tabela de preços e tela de pagamento.
 
-## Como funciona
+---
 
-1. O sensor ultrassônico mede a distância a cada 100 ms.
-2. Se a distância for **menor ou igual a 15 cm**, o servo vai para **90°** (aberto), o LED vermelho acende e o verde apaga.
-3. Caso contrário, o servo volta para **0°** (fechado), o LED verde acende e o vermelho apaga.
-4. O servo só recebe comando quando o estado muda, graças à variável `aberto`, o que evita comandos repetidos.
-5. Se o sensor não receber eco dentro de 30 ms, a função retorna `999`, e o sistema entende como "livre".
-6. As leituras são enviadas pelo Monitor Serial (9600 baud).
+## 📋 Funcionalidades Principais
 
-## Componentes
+1. **Leitura e Associação RFID**:
+   - Leitura de tags/cartões RFID via leitor **MFRC522** conectado ao Arduino ou leitor USB.
+   - Associação de cada RFID ao **Nome do Titular**, **Placa do Carro**, **Número de Contato (WhatsApp)** e **CPF do Titular**.
+2. **Registro de Entrada & Temporizador em Tempo Real**:
+   - Ao aproximar a tag RFID cadastrada na entrada, a cancela é aberta e o **cronômetro inicia automaticamente**.
+   - No pátio virtual da aplicação Web, cada veículo conta com um cronômetro ao vivo (`HH:MM:SS`) e cálculo dinâmico do valor acumulado.
+3. **Tela de Pagamento (Conforme Solicitado)**:
+   - Seleção do veículo por aproximação da tag RFID ou seleção na lista.
+   - **Finalização do temporizador** no segundo exato da saída.
+   - Cálculo automático do valor com base na **Tabela de Preços configurável** (Tolerância gratuita, 1ª Hora, Frações de 15 minutos / Horas adicionais e Diária).
+   - Suporte a múltiplas formas de pagamento: **PIX** (com QR Code), **Cartão de Crédito**, **Cartão de Débito** e **Dinheiro** (com cálculo automático de troco).
+   - Confirmação do pagamento que envia sinal de **abertura da cancela** para saída do veículo e gera o **Comprovante / Recibo** pronto para impressão.
+4. **Comunicação Web Serial Direta**:
+   - O sistema conecta-se ao Arduino diretamente pelo navegador (Google Chrome / Edge) com um clique, sem necessidade de drivers adicionais.
+   - Inclui **Simulador de Leitura RFID** para testes rápidos mesmo sem a placa física plugada.
 
-- 1x Arduino (Uno, Nano ou compatível)
-- 1x Sensor ultrassônico (HC-SR04 ou similar)
-- 1x Servo motor (ex.: SG90)
-- 1x LED verde
-- 1x LED vermelho
-- 2x Resistores para os LEDs
-- Protoboard e jumpers
+---
 
-## Ligações (pinagem)
-
-| Componente         | Pino do Arduino |
-|--------------------|-----------------|
-| Sensor TRIG        | 3               |
-| Sensor ECHO        | 2               |
-| LED verde          | 7               |
-| LED vermelho       | 8               |
-| Servo (sinal)      | 10              |
-
-> Alimente o sensor e o servo com 5V e GND. Cada LED deve ter um resistor em série.
-
-## Parâmetros configuráveis
-
-No início do código é possível ajustar:
-
-```cpp
-const int distancia_deteccao = 15;  // Distância (cm) para abrir a cancela
-const int ANGULO_FECHADO = 0;       // Ângulo do servo com a cancela fechada
-const int ANGULO_ABERTO  = 90;      // Ângulo do servo com a cancela aberta
-```
-
-## Como usar
-
-1. Monte o circuito conforme a tabela de ligações.
-2. Abra o arquivo `prototipo.ino` na Arduino IDE.
-3. Selecione a placa e a porta corretas em **Ferramentas**.
-4. Faça o upload do código.
-5. Abra o Monitor Serial em **9600 baud** para acompanhar as leituras:
+## 🛠️ Estrutura do Projeto
 
 ```
-Livre: 42cm
-Detectado: 12cm
+Projeto PEX 2° Período/
+│
+├── prototipo.ino                          # Código principal do Arduino com RFID + Cancela + Sensor
+├── arduino/
+│   ├── prototipo_estacionamento/
+│   │   └── prototipo_estacionamento.ino   # Cópia para compilação organizada na Arduino IDE
+│   └── ligacoes_e_componentes.md          # Diagrama e guia de pinagem completo
+│
+├── server.js                              # Servidor Node.js Express com SSE e API REST
+├── database.json                          # Banco de dados persistente (veículos, sessões e tabela)
+├── package.json                           # Configuração e dependências do projeto
+│
+├── public/                                # Interface Web (Frontend)
+│   ├── index.html                         # Estrutura HTML das telas (Pátio, Pagamento, Cadastro, Tabela)
+│   ├── css/
+│   │   └── style.css                      # Estilo moderno, responsivo e regras para impressão
+│   └── js/
+│       ├── app.js                         # Lógica do sistema, timers em tempo real e regras de negócio
+│       └── serial.js                      # Conexão USB via Web Serial API
+│
+├── iniciar_sistema.bat                    # Script para inicializar o sistema com 1 clique no Windows
+└── README.md                              # Documentação do projeto
 ```
 
-## Estrutura do projeto
+---
 
+## 🔌 Pinagem e Circuito no Arduino Uno
+
+| Componente | Pino no Módulo | Pino no Arduino Uno | Observações |
+| :--- | :--- | :---: | :--- |
+| **Leitor RFID RC522** | **3.3V** | **3.3V** | ⚠️ **NÃO** ligar no 5V! |
+| | **RST** | **Pino 9** | Reset do módulo |
+| | **GND** | **GND** | Terra |
+| | **MISO** | **Pino 12** | SPI MISO |
+| | **MOSI** | **Pino 11** | SPI MOSI |
+| | **SCK** | **Pino 13** | SPI Clock |
+| | **SDA / SS** | **Pino 10** | Slave Select |
+| **Servo Motor** | Sinal (Laranja/Amarelo) | **Pino 6** | Controle da cancela |
+| **Sensor Ultrassônico**| **TRIG** | **Pino 3** | Disparo de pulso |
+| | **ECHO** | **Pino 2** | Retorno de eco |
+| **LED Verde** | Ânodo (+) | **Pino 7** | Acesso liberado (com resistor 220Ω) |
+| **LED Vermelho** | Ânodo (+) | **Pino 8** | Cancela fechada / Pare (com resistor 220Ω) |
+| **Buzzer Ativo** | Positivo (+) | **Pino 5** | Bip de leitura RFID e alerta |
+
+---
+
+## 🚀 Como Executar o Sistema
+
+### 1. Gravando o Código no Arduino
+1. Abra a **Arduino IDE**.
+2. Instale a biblioteca **MFRC522** em: `Sketch -> Incluir Biblioteca -> Gerenciar Bibliotecas...` buscando por `MFRC522`.
+3. Abra o arquivo [prototipo.ino](file:///c:/Users/andra/OneDrive/Documentos/Arduino/Projeto%20PEX%202°%20Período/prototipo.ino).
+4. Selecione a sua placa (Arduino Uno ou Nano) e a porta COM em **Ferramentas**.
+5. Clique em **Carregar (Upload)**.
+
+### 2. Iniciando a Aplicação Web
+Você pode inicializar de duas maneiras:
+
+#### Opção A (Recomendada - 1 Clique):
+- Dê um duplo-clique no arquivo **`iniciar_sistema.bat`**.
+- O servidor será iniciado e seu navegador abrirá automaticamente em `http://localhost:3000`.
+
+#### Opção B (Via Terminal):
+```bash
+npm start
 ```
-.
-├── prototipo.ino   # Código principal do protótipo
-└── README.md
-```
+Acesse no navegador: **`http://localhost:3000`**
 
-## Funções principais
+---
 
-- `setup()`: configura os pinos, inicia a serial e deixa o servo na posição fechada.
-- `loop()`: lê a distância, controla LEDs e servo conforme a detecção.
-- `sensor_morcego(trig, echo)`: dispara o pulso ultrassônico e retorna a distância em cm (`duração / 58`), ou `999` se não houver eco.
+## 💳 Como Usar a Tela de Pagamento
 
-## Dependências
-
-- Biblioteca [`Servo`](https://www.arduino.cc/reference/en/libraries/servo/) (já inclusa na Arduino IDE)
-
-## Possíveis melhorias
-
-- Adicionar um atraso antes de fechar a cancela, para evitar que ela feche enquanto o objeto ainda está passando.
-- Incluir um buzzer como alerta sonoro.
-- Usar média de várias leituras para reduzir ruídos do sensor.
+1. O veículo entra no estacionamento ao aproximar a tag RFID (ou simulada): o temporizador começa a contar.
+2. Na aba **Pátio em Tempo Real**, você pode acompanhar os segundos correndo e o valor acumulado de cada vaga.
+3. Para finalizar a estadia do veículo, clique no botão **"Finalizar & Pagar"** ou acesse a aba **"Pagamento"**:
+   - Aproxime o cartão RFID do titular ou selecione o carro na lista.
+   - O temporizador congela a contagem no momento exato e a memória de cálculo é exibida com base na Tabela de Preços configurada.
+   - Selecione a forma de pagamento (**PIX**, **Cartão** ou **Dinheiro**).
+   - Clique em **"Finalizar Temporizador & Pagar"**:
+     - O sistema registra a saída com status **PAGO**.
+     - Um comando `OPEN` é enviado pela porta serial para o Arduino abrir a cancela.
+     - O **Comprovante de Estacionamento** é gerado com opção de impressão direta.

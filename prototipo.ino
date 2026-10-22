@@ -1,82 +1,212 @@
 /******************************************************************************/
-/*        Projeto: Protótipo Sensor com Servo (Cancela Automática)            */
+/*  Projeto PEX 2° Período: Sistema de Estacionamento Inteligente com RFID    */
+/*  Componentes: Arduino Uno, MFRC522 (RFID), Servo Motor (Cancela),          */
+/*               Sensor Ultrassônico HC-SR04, LEDs Indicadores e Buzzer       */
 /******************************************************************************/
 
-#include <Servo.h>  // Biblioteca para controlar o servo motor
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Servo.h>
 
-// Distância (cm) abaixo da qual o servo abre
-const int distancia_deteccao = 15;
+// --- PINAGEM DO LEITOR RFID RC522 (SPI) ---
+#define SS_PIN   10   // Pino SDA do RC522
+#define RST_PIN  9    // Pino RST do RC522
 
-// Ângulos do servo
-const int ANGULO_FECHADO = 0;
-const int ANGULO_ABERTO  = 90;
+// --- DEMAIS PINOS DO CIRCUITO ---
+#define PINO_SERVO    6   // Pino de sinal do Servo Motor (Cancela)
+#define PINO_TRIG     3   // Pino TRIG do sensor ultrassônico HC-SR04
+#define PINO_ECHO     2   // Pino ECHO do sensor ultrassônico HC-SR04
+#define PINO_LED_VERDE 7  // LED Verde: Cancela aberta / Entrada liberada
+#define PINO_LED_VERM  8  // LED Vermelho: Cancela fechada / Pare
+#define PINO_BUZZER    5  // Buzzer (feedback sonoro de leitura)
 
-// Pinos do sensor
-const int TRIG = 3;
-const int ECHO = 2;
+// --- CONFIGURAÇÃO DOS ÂNGULOS DO SERVO ---
+const int ANGULO_FECHADO = 0;   // Cancela abaixada (fechada)
+const int ANGULO_ABERTO  = 90;  // Cancela levantada (aberta)
+const int DISTANCIA_DETECCAO = 15; // Distância em cm para detectar passagem do veículo
 
-// Demais componentes
-const int ledGreen = 7;
-const int ledRed   = 8;
-const int pinoServo = 10;
+// --- OBJETOS ---
+MFRC522 rfid(SS_PIN, RST_PIN);
+Servo servoCancela;
 
-Servo servo;               // Objeto do servo
-bool aberto = false;       // Guarda o estado atual (evita comandos repetidos)
+// --- VARIÁVEIS DE CONTROLE ---
+bool cancelaAberta = false;
+unsigned long tempoAbertura = 0;
+const unsigned long TEMPO_MAXIMO_ABERTA = 7000; // Tempo máximo de cancela aberta (7s)
+String ultimoUidLido = "";
+unsigned long tempoUltimaLeitura = 0;
+const unsigned long INTERVALO_LEITURA_RFID = 2500; // Evita leitura repetida do mesmo cartão em 2.5s
 
 void setup() {
   Serial.begin(9600);
+  while (!Serial && millis() < 3000);
 
-  pinMode(TRIG, OUTPUT);
-  pinMode(ECHO, INPUT);
-  pinMode(ledGreen, OUTPUT);
-  pinMode(ledRed, OUTPUT);
+  // Inicializa barramento SPI e Leitor RFID RC522
+  SPI.begin();
+  rfid.PCD_Init();
 
-  servo.attach(pinoServo);       // Liga o servo ao pino 10
-  servo.write(ANGULO_FECHADO);   // Começa fechado
+  // Configuração dos pinos de entrada e saída
+  pinMode(PINO_TRIG, OUTPUT);
+  pinMode(PINO_ECHO, INPUT);
+  pinMode(PINO_LED_VERDE, OUTPUT);
+  pinMode(PINO_LED_VERM, OUTPUT);
+  pinMode(PINO_BUZZER, OUTPUT);
+
+  // Inicializa o servo motor na posição fechada
+  servoCancela.attach(PINO_SERVO);
+  fecharCancela();
+
+  // Bip de inicialização
+  tocarBip(100);
+
+  Serial.println(F("SISTEMA_PRONTO"));
+  Serial.println(F("Aguardando aproximacao de cartao RFID..."));
 }
 
 void loop() {
-  int distancia = sensor_morcego(TRIG, ECHO);
+  // 1. Processa comandos recebidos do computador / site via Serial
+  verificarComandosSerial();
 
-  if (distancia <= distancia_deteccao) {
-    // Objeto detectado: abre
-    Serial.print("Detectado: ");
-    Serial.print(distancia);
-    Serial.println("cm");
-    digitalWrite(ledGreen, LOW);
-    digitalWrite(ledRed, HIGH);
+  // 2. Realiza leitura do leitor RFID MFRC522
+  verificarLeituraRFID();
 
-    if (!aberto) {                 // Só move se ainda não estiver aberto
-      servo.write(ANGULO_ABERTO);
-      aberto = true;
-    }
-  } else {
-    // Nada na frente: fecha
-    Serial.print("Livre: ");
-    Serial.print(distancia);
-    Serial.println("cm");
-    digitalWrite(ledGreen, HIGH);
-    digitalWrite(ledRed, LOW);
+  // 3. Gerencia fechamento inteligente da cancela
+  gerenciarFechamentoCancela();
 
-    if (aberto) {                  // Só move se ainda estiver aberto
-      servo.write(ANGULO_FECHADO);
-      aberto = false;
-    }
-  }
-  delay(100);
+  delay(50);
 }
 
-// Mede a distância em cm (retorna 999 se não houver eco)
-int sensor_morcego(int pinotrig, int pinoecho) {
-  digitalWrite(pinotrig, LOW);
-  delayMicroseconds(2);
-  digitalWrite(pinotrig, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(pinotrig, LOW);
-
-  long duracao = pulseIn(pinoecho, HIGH, 30000);  // Timeout de 30 ms
-  if (duracao == 0) {
-    return 999;
+// ====================================================================
+// LEITURA DO CARTÃO RFID
+// ====================================================================
+void verificarLeituraRFID() {
+  if (!rfid.PICC_IsNewCardPresent()) {
+    return;
   }
+
+  if (!rfid.PICC_ReadCardSerial()) {
+    return;
+  }
+
+  // Formata o UID lido em Hexadecimal (ex: A1B2C3D4)
+  String uidAtual = "";
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    if (rfid.uid.uidByte[i] < 0x10) {
+      uidAtual += "0";
+    }
+    uidAtual += String(rfid.uid.uidByte[i], HEX);
+  }
+  uidAtual.toUpperCase();
+
+  // Filtro de repetição rápida
+  unsigned long agora = millis();
+  if (uidAtual == ultimoUidLido && (agora - tempoUltimaLeitura < INTERVALO_LEITURA_RFID)) {
+    rfid.PICC_HaltA();
+    rfid.PCD_StopCrypto1();
+    return;
+  }
+
+  ultimoUidLido = uidAtual;
+  tempoUltimaLeitura = agora;
+
+  // Bip sonoro rápido de leitura confirmada
+  tocarBip(80);
+
+  // Envia pela porta Serial para o Sistema Web
+  Serial.print("RFID:");
+  Serial.println(uidAtual);
+
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+}
+
+// ====================================================================
+// PROCESSAMENTO DE COMANDOS ENVIADOS PELO SITE
+// ====================================================================
+void verificarComandosSerial() {
+  if (Serial.available() > 0) {
+    String comando = Serial.readStringUntil('\n');
+    comando.trim();
+    comando.toUpperCase();
+
+    if (comando == "OPEN" || comando == "ABRIR") {
+      abrirCancela();
+      Serial.println(F("STATUS:CANCELA_ABERTA"));
+    } else if (comando == "CLOSE" || comando == "FECHAR") {
+      fecharCancela();
+      Serial.println(F("STATUS:CANCELA_FECHADA"));
+    } else if (comando == "DENIED" || comando == "RECUSADO") {
+      notificarAcessoNegado();
+      Serial.println(F("STATUS:ACESSO_NEGADO"));
+    }
+  }
+}
+
+// ====================================================================
+// CONTROLE DA CANCELA (SERVO, SENSOR ULTRASSÔNICO E LEDS)
+// ====================================================================
+void abrirCancela() {
+  servoCancela.write(ANGULO_ABERTO);
+  digitalWrite(PINO_LED_VERDE, HIGH);
+  digitalWrite(PINO_LED_VERM, LOW);
+  cancelaAberta = true;
+  tempoAbertura = millis();
+  tocarBip(150);
+}
+
+void fecharCancela() {
+  servoCancela.write(ANGULO_FECHADO);
+  digitalWrite(PINO_LED_VERDE, LOW);
+  digitalWrite(PINO_LED_VERM, HIGH);
+  cancelaAberta = false;
+}
+
+void gerenciarFechamentoCancela() {
+  if (!cancelaAberta) return;
+
+  unsigned long tempoPassado = millis() - tempoAbertura;
+  int distancia = lerDistanciaUltrassom();
+
+  // Fecha após tempo limite seguro (7 segundos)
+  if (tempoPassado >= TEMPO_MAXIMO_ABERTA) {
+    fecharCancela();
+    Serial.println(F("EVENTO:CANCELA_FECHADA_TEMPO"));
+    return;
+  }
+
+  // Fecha de forma inteligente quando o carro passar pelo sensor ultrassônico
+  if (tempoPassado > 2500 && distancia > DISTANCIA_DETECCAO) {
+    fecharCancela();
+    Serial.println(F("EVENTO:CANCELA_FECHADA_PASSAGEM"));
+  }
+}
+
+// Medição ultrassônica em cm
+int lerDistanciaUltrassom() {
+  digitalWrite(PINO_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PINO_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PINO_TRIG, LOW);
+
+  long duracao = pulseIn(PINO_ECHO, HIGH, 25000);
+  if (duracao == 0) return 999;
   return duracao / 58;
+}
+
+void notificarAcessoNegado() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(PINO_LED_VERM, LOW);
+    digitalWrite(PINO_BUZZER, HIGH);
+    delay(100);
+    digitalWrite(PINO_LED_VERM, HIGH);
+    digitalWrite(PINO_BUZZER, LOW);
+    delay(100);
+  }
+}
+
+void tocarBip(int duracaoMs) {
+  digitalWrite(PINO_BUZZER, HIGH);
+  delay(duracaoMs);
+  digitalWrite(PINO_BUZZER, LOW);
 }
