@@ -1,16 +1,23 @@
 /**
- * Sistema de Estacionamento Inteligente com RFID - SmartPark RFID
+ * SmartPark RFID - Sistema de Estacionamento Inteligente
  * Projeto PEX 2° Período
+ *
+ * Suporte a:
+ * - Sistema de Cargos (Admin vs Cliente/Veículo) e Login
+ * - Cronômetros ao vivo em tempo real (Pátio e Portal do Cliente)
+ * - Tela de Pagamento por Tabela (Guarita e Online pelo Cliente)
+ * - Integração com Arduino via Web Serial API
  */
 
 // Estado Global da Aplicação
 const Estado = {
+  usuario: null, // { role: 'admin' | 'cliente', nome, veiculo, token }
   veiculos: [],
   sessoesAtivas: [],
   historico: [],
   tabelaPrecos: {
-    toleranciaMinutos: 15,
-    primeiraHora: 10.0,
+    toleranciaMinutos: 10,
+    primeiraHora: 5.0,
     horaAdicional: 5.0,
     fracao15min: 2.0,
     valorDiaria: 50.0,
@@ -20,6 +27,8 @@ const Estado = {
   ultimoRfidLido: '',
   sessaoSelecionadaId: null,
   metodoPagamento: 'pix',
+  metodoPagamentoCliente: 'pix',
+  dadosClientePortal: null,
   intervaloCronometro: null
 };
 
@@ -27,26 +36,424 @@ const Estado = {
 // INICIALIZAÇÃO DA APLICAÇÃO
 // ====================================================================
 document.addEventListener('DOMContentLoaded', () => {
+  configurarAutenticacao();
   configurarNavegacaoAbas();
   configurarEventosForms();
   configurarEventosPagamento();
+  configurarEventosPortalCliente();
   configurarSimulador();
   configurarSSE();
   configurarOuvinteSerialRFID();
 
-  // Carrega dados iniciais
-  carregarStatusDashboard();
-  carregarTabelaPrecos();
-  carregarVeiculos();
-  carregarSessoesAtivas();
-  carregarHistorico();
+  // Verifica se já existe sessão salva
+  verificarSessaoSalva();
 
-  // Inicia loop de atualização de cronômetro (a cada 1 segundo)
+  // Inicia loop de atualização de cronômetros em tempo real
   iniciarLoopCronometro();
 });
 
 // ====================================================================
-// NAVEGAÇÃO ENTRE ABAS
+// AUTENTICAÇÃO E CONTROLE DE CARGOS (ADMIN vs CLIENTE)
+// ====================================================================
+function configurarAutenticacao() {
+  const formLogin = document.getElementById('form-login');
+  const btnRoleCliente = document.getElementById('btn-role-cliente');
+  const btnRoleAdmin = document.getElementById('btn-role-admin');
+  const lblLogin = document.getElementById('lbl-login-input');
+  const helpLogin = document.getElementById('help-login-input');
+  const inputLogin = document.getElementById('input-login');
+  const inputSenha = document.getElementById('input-senha');
+
+  btnRoleCliente?.addEventListener('click', () => {
+    btnRoleCliente.classList.add('active');
+    btnRoleAdmin.classList.remove('active');
+    lblLogin.innerText = 'Placa do Veículo, CPF ou Login:';
+    helpLogin.innerText = 'Digite a placa do seu carro ou CPF cadastrado.';
+    inputLogin.placeholder = 'Ex: BRA2E19 ou seu CPF';
+    inputLogin.value = '';
+    inputSenha.value = '';
+    inputLogin.focus();
+  });
+
+  btnRoleAdmin?.addEventListener('click', () => {
+    btnRoleAdmin.classList.add('active');
+    btnRoleCliente.classList.remove('active');
+    lblLogin.innerText = 'Login de Administrador:';
+    helpLogin.innerText = 'Digite as credenciais da guarita/administração.';
+    inputLogin.placeholder = 'Ex: admin';
+    inputLogin.value = 'admin';
+    inputSenha.value = '123';
+    inputSenha.focus();
+  });
+
+  // Botões de Demonstração Rápida
+  document.getElementById('btn-demo-admin')?.addEventListener('click', () => {
+    btnRoleAdmin.click();
+    inputLogin.value = 'admin';
+    inputSenha.value = '123';
+    formLogin.requestSubmit();
+  });
+
+  document.getElementById('btn-demo-cliente')?.addEventListener('click', () => {
+    btnRoleCliente.click();
+    const primeiro = Estado.veiculos[0];
+    inputLogin.value = primeiro ? (primeiro.login || primeiro.placa) : 'PHE1493';
+    inputSenha.value = primeiro ? (primeiro.senha || '123') : '123';
+    formLogin.requestSubmit();
+  });
+
+  // Submissão do Formulário de Login
+  formLogin?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const login = inputLogin.value.trim();
+    const senha = inputSenha.value.trim();
+
+    if (!login || !senha) {
+      mostrarToast('Preencha o login e a senha.', 'warning');
+      return;
+    }
+
+    try {
+      const btnSubmit = document.getElementById('btn-submit-login');
+      btnSubmit.disabled = true;
+      btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Autenticando...';
+
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login, senha })
+      });
+
+      const dados = await res.json();
+      btnSubmit.disabled = false;
+      btnSubmit.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Acessar Sistema';
+
+      if (!dados.sucesso) {
+        mostrarToast(dados.mensagem || 'Falha no login.', 'danger');
+        return;
+      }
+
+      // Login bem-sucedido
+      Estado.usuario = dados.usuario;
+      localStorage.setItem('smartpark_user', JSON.stringify(dados.usuario));
+      mostrarToast(`Bem-vindo, ${dados.usuario.nome || 'Usuário'}!`, 'success');
+
+      aplicarVisualPorCargo(dados.usuario);
+    } catch (err) {
+      console.error('Erro no login:', err);
+      mostrarToast('Erro ao conectar ao servidor.', 'danger');
+    }
+  });
+
+  // Botão Sair (Logout)
+  document.getElementById('btn-logout')?.addEventListener('click', () => {
+    if (confirm('Deseja realmente sair do sistema?')) {
+      fazerLogout();
+    }
+  });
+}
+
+function verificarSessaoSalva() {
+  const salvo = localStorage.getItem('smartpark_user');
+  if (salvo) {
+    try {
+      Estado.usuario = JSON.parse(salvo);
+      aplicarVisualPorCargo(Estado.usuario);
+      return;
+    } catch (e) {
+      localStorage.removeItem('smartpark_user');
+    }
+  }
+
+  // Se não estiver logado, exibe tela de login
+  document.getElementById('tela-login').style.display = 'flex';
+  document.getElementById('tela-principal-app').style.display = 'none';
+}
+
+function aplicarVisualPorCargo(usuario) {
+  document.getElementById('tela-login').style.display = 'none';
+  document.getElementById('tela-principal-app').style.display = 'block';
+
+  const avatarEl = document.getElementById('user-avatar');
+  const nameEl = document.getElementById('user-display-name');
+  const roleEl = document.getElementById('user-display-role');
+  const navSubtitle = document.getElementById('nav-subtitle');
+
+  if (usuario.role === 'admin') {
+    // VISÃO DE ADMINISTRADOR
+    avatarEl.innerHTML = '<i class="fa-solid fa-user-shield"></i>';
+    nameEl.innerText = usuario.nome || 'Administrador';
+    roleEl.innerText = 'ADMINISTRADOR';
+    navSubtitle.innerText = 'Painel Geral • Guarita';
+
+    document.getElementById('admin-nav-tabs').style.display = 'flex';
+    document.getElementById('portal-admin').style.display = 'block';
+    document.getElementById('portal-cliente').style.display = 'none';
+
+    carregarStatusDashboard();
+    carregarTabelaPrecos();
+    carregarVeiculos();
+    carregarSessoesAtivas();
+    carregarHistorico();
+    mudarAba('tab-patio');
+  } else {
+    // VISÃO DE CLIENTE / PROPRIETÁRIO DO VEÍCULO
+    avatarEl.innerHTML = '<i class="fa-solid fa-car"></i>';
+    nameEl.innerText = usuario.veiculo.nome || 'Cliente';
+    roleEl.innerText = `VEÍCULO ${usuario.veiculo.placa}`;
+    navSubtitle.innerText = 'Portal do Motorista';
+
+    document.getElementById('admin-nav-tabs').style.display = 'none';
+    document.getElementById('portal-admin').style.display = 'none';
+    document.getElementById('portal-cliente').style.display = 'block';
+
+    carregarTabelaPrecos();
+    carregarDadosPortalCliente(usuario.veiculo.rfid);
+  }
+}
+
+function fazerLogout() {
+  localStorage.removeItem('smartpark_user');
+  Estado.usuario = null;
+  document.getElementById('tela-principal-app').style.display = 'none';
+  document.getElementById('tela-login').style.display = 'flex';
+  document.getElementById('input-login').value = '';
+  document.getElementById('input-senha').value = '';
+  mostrarToast('Você saiu do sistema.', 'info');
+}
+
+// ====================================================================
+// PORTAL DO CLIENTE (ACOMPANHAMENTO DO TEMPO E PAGAMENTO DO SEU CARRO)
+// ====================================================================
+function configurarEventosPortalCliente() {
+  const cliMethodPix = document.getElementById('cli-method-pix');
+  const cliMethodCartao = document.getElementById('cli-method-cartao');
+  const cliAreaPix = document.getElementById('cli-area-pix');
+
+  cliMethodPix?.addEventListener('click', () => {
+    cliMethodPix.classList.add('selected');
+    cliMethodCartao.classList.remove('selected');
+    Estado.metodoPagamentoCliente = 'pix';
+    if (cliAreaPix) cliAreaPix.style.display = 'block';
+  });
+
+  cliMethodCartao?.addEventListener('click', () => {
+    cliMethodCartao.classList.add('selected');
+    cliMethodPix.classList.remove('selected');
+    Estado.metodoPagamentoCliente = 'cartao_credito';
+    if (cliAreaPix) cliAreaPix.style.display = 'none';
+  });
+
+  // Botão Pagar pelo Portal do Cliente
+  document.getElementById('btn-cli-confirmar-pagamento')?.addEventListener('click', async () => {
+    await finalizarPagamentoCliente();
+  });
+
+  // Botão Simular Entrada do próprio cliente
+  document.getElementById('btn-cli-simular-entrada')?.addEventListener('click', async () => {
+    if (Estado.usuario && Estado.usuario.veiculo) {
+      await processarLeituraRFID(Estado.usuario.veiculo.rfid);
+      carregarDadosPortalCliente(Estado.usuario.veiculo.rfid);
+    }
+  });
+}
+
+async function carregarDadosPortalCliente(rfid) {
+  try {
+    const res = await fetch(`/api/cliente/meu-veiculo/${rfid}`);
+    const dados = await res.json();
+
+    if (!dados.sucesso) {
+      mostrarToast('Não foi possível carregar os dados do seu veículo.', 'danger');
+      return;
+    }
+
+    Estado.dadosClientePortal = dados;
+
+    // Atualiza cabeçalho do cliente
+    document.getElementById('cli-veiculo-placa').innerText = dados.veiculo.placa;
+    document.getElementById('cli-veiculo-rfid').innerText = `RFID: ${dados.veiculo.rfid}`;
+    document.getElementById('cli-titular-nome').innerText = dados.veiculo.nome;
+    document.getElementById('cli-titular-cpf').innerText = dados.veiculo.cpf;
+    document.getElementById('cli-titular-contato').innerText = dados.veiculo.contato;
+
+    const statusBadge = document.getElementById('cli-status-badge');
+    const blocoEstacionado = document.getElementById('cli-bloco-estacionado');
+    const blocoFora = document.getElementById('cli-bloco-fora');
+
+    if (dados.estacionado && dados.sessaoAtiva) {
+      // CARRO ESTACIONADO
+      statusBadge.className = 'client-status-badge parked';
+      statusBadge.innerHTML = '<i class="fa-solid fa-car-side fa-beat"></i> Estacionado no Pátio';
+      blocoEstacionado.style.display = 'block';
+      blocoFora.style.display = 'none';
+
+      document.getElementById('cli-hora-entrada').innerText = new Date(dados.sessaoAtiva.entrada).toLocaleTimeString('pt-BR');
+      atualizarValoresTempoCliente(dados.sessaoAtiva.entrada);
+    } else {
+      // CARRO FORA DO PÁTIO
+      statusBadge.className = 'client-status-badge outside';
+      statusBadge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Fora do Estacionamento';
+      blocoEstacionado.style.display = 'none';
+      blocoFora.style.display = 'block';
+    }
+
+    renderizarHistoricoCliente(dados.historico || []);
+  } catch (err) {
+    console.error('Erro ao carregar portal do cliente:', err);
+  }
+}
+
+function atualizarValoresTempoCliente(entradaMs) {
+  const agora = Date.now();
+  const cronEl = document.getElementById('cli-cronometro-tempo');
+  const valorEl = document.getElementById('cli-valor-total');
+  const calcEl = document.getElementById('cli-detalhes-calculo');
+
+  if (cronEl) cronEl.innerText = formatarTempoHMS(agora - entradaMs);
+
+  const calc = calcularValorTempoReal(entradaMs, agora);
+  if (valorEl) valorEl.innerText = formatarMoeda(calc.valorTotal);
+  if (calcEl) calcEl.innerText = calc.detalhes;
+}
+
+async function finalizarPagamentoCliente() {
+  const portal = Estado.dadosClientePortal;
+  if (!portal || !portal.sessaoAtiva) {
+    mostrarToast('Nenhuma sessão ativa encontrada para pagamento.', 'warning');
+    return;
+  }
+
+  const sessao = portal.sessaoAtiva;
+  const btnPagar = document.getElementById('btn-cli-confirmar-pagamento');
+
+  try {
+    btnPagar.disabled = true;
+    btnPagar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando Pagamento...';
+
+    const payload = {
+      sessaoId: sessao.id,
+      formaPagamento: Estado.metodoPagamentoCliente,
+      valorRecebido: null,
+      desconto: 0,
+      acrescimo: 0,
+      saidaTimestamp: Date.now()
+    };
+
+    const res = await fetch('/api/pagamento/finalizar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const resposta = await res.json();
+    btnPagar.disabled = false;
+    btnPagar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Pagar Agora e Liberar Cancela';
+
+    if (!resposta.sucesso) {
+      mostrarToast(resposta.mensagem, 'danger');
+      return;
+    }
+
+    // Abre a cancela de saída no Arduino!
+    arduinoSerial.enviarComando('OPEN');
+
+    mostrarToast('✅ Pagamento concluído com sucesso! Cancela liberada.', 'success');
+
+    abrirModalRecibo(resposta.comprovante);
+
+    // Recarrega o portal do cliente
+    carregarDadosPortalCliente(portal.veiculo.rfid);
+  } catch (err) {
+    console.error('Erro ao pagar pelo portal:', err);
+    btnPagar.disabled = false;
+    btnPagar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Pagar Agora e Liberar Cancela';
+    mostrarToast('Erro ao processar pagamento.', 'danger');
+  }
+}
+
+function renderizarHistoricoCliente(historico) {
+  const tbody = document.getElementById('cli-historico-tabela-body');
+  if (!tbody) return;
+
+  if (historico.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Você ainda não possui estadias finalizadas registradas.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = historico.map(s => `
+    <tr>
+      <td><strong>REC-${s.id.replace('SES-', '')}</strong></td>
+      <td>${new Date(s.entrada).toLocaleString('pt-BR')}</td>
+      <td>${s.saida ? new Date(s.saida).toLocaleString('pt-BR') : '-'}</td>
+      <td>${s.tempoFormatado || '-'}</td>
+      <td style="font-weight: 700; color: var(--success);">${formatarMoeda(s.valorCobrado || 0)}</td>
+      <td><span class="badge" style="background: #f1f5f9; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">${s.formaPagamento || '-'}</span></td>
+      <td style="text-align: right;">
+        <button class="btn btn-outline btn-sm" onclick="reimprimirRecibo('${s.id}')">
+          <i class="fa-solid fa-receipt"></i> Recibo
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function copiarChavePix() {
+  const chave = 'pex-estacionamento-2026@arduino.org';
+  navigator.clipboard.writeText(chave);
+  mostrarToast('Chave Pix copiada para a área de transferência!', 'success');
+}
+
+// ====================================================================
+// SERVER-SENT EVENTS (SSE) E ATUALIZAÇÕES EM TEMPO REAL
+// ====================================================================
+function configurarSSE() {
+  try {
+    const evtSource = new EventSource('/api/eventos');
+
+    evtSource.addEventListener('entrada_registrada', (e) => {
+      const dados = JSON.parse(e.data);
+      mostrarToast(`🚗 Entrada: ${dados.veiculo.placa} (${dados.veiculo.nome})!`, 'info');
+
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        carregarSessoesAtivas();
+        carregarStatusDashboard();
+      } else if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.usuario.veiculo.rfid === dados.veiculo.rfid) {
+        carregarDadosPortalCliente(dados.veiculo.rfid);
+      }
+    });
+
+    evtSource.addEventListener('pagamento_concluido', (e) => {
+      const dados = JSON.parse(e.data);
+
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        carregarSessoesAtivas();
+        carregarHistorico();
+        carregarStatusDashboard();
+      } else if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.usuario.veiculo.rfid === dados.sessao.rfid) {
+        carregarDadosPortalCliente(dados.sessao.rfid);
+      }
+    });
+
+    evtSource.addEventListener('veiculo_cadastrado', () => {
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        carregarVeiculos();
+        carregarStatusDashboard();
+      }
+    });
+
+    evtSource.addEventListener('tabela_atualizada', (e) => {
+      Estado.tabelaPrecos = JSON.parse(e.data);
+      atualizarCamposTabelaPrecos();
+    });
+  } catch (err) {
+    console.warn('SSE indisponível:', err);
+  }
+}
+
+// ====================================================================
+// NAVEGAÇÃO ENTRE ABAS DO ADMIN
 // ====================================================================
 function configurarNavegacaoAbas() {
   const tabBtns = document.querySelectorAll('.tab-btn');
@@ -65,7 +472,6 @@ function configurarNavegacaoAbas() {
         targetPane.classList.add('active');
       }
 
-      // Atualizações sob demanda ao trocar de aba
       if (targetId === 'tab-patio') carregarSessoesAtivas();
       if (targetId === 'tab-pagamento') atualizarSelectSessaoPagamento();
       if (targetId === 'tab-veiculos') carregarVeiculos();
@@ -73,7 +479,6 @@ function configurarNavegacaoAbas() {
     });
   });
 
-  // Atalho do Dashboard para novo veículo
   const btnNovoVeiculo = document.getElementById('btn-novo-veiculo-atalho');
   if (btnNovoVeiculo) {
     btnNovoVeiculo.addEventListener('click', () => {
@@ -82,7 +487,6 @@ function configurarNavegacaoAbas() {
     });
   }
 
-  // Botões de atualizar manuais
   document.getElementById('btn-atualizar-patio')?.addEventListener('click', carregarSessoesAtivas);
   document.getElementById('btn-atualizar-historico')?.addEventListener('click', carregarHistorico);
 }
@@ -93,42 +497,7 @@ function mudarAba(tabId) {
 }
 
 // ====================================================================
-// SERVER-SENT EVENTS (SSE) E SINCRONIZAÇÃO EM TEMPO REAL
-// ====================================================================
-function configurarSSE() {
-  try {
-    const evtSource = new EventSource('/api/eventos');
-
-    evtSource.addEventListener('entrada_registrada', (e) => {
-      const dados = JSON.parse(e.data);
-      mostrarToast(`Entrada: ${dados.veiculo.placa} (${dados.veiculo.nome})!`, 'info');
-      carregarSessoesAtivas();
-      carregarStatusDashboard();
-    });
-
-    evtSource.addEventListener('pagamento_concluido', (e) => {
-      const dados = JSON.parse(e.data);
-      carregarSessoesAtivas();
-      carregarHistorico();
-      carregarStatusDashboard();
-    });
-
-    evtSource.addEventListener('veiculo_cadastrado', () => {
-      carregarVeiculos();
-      carregarStatusDashboard();
-    });
-
-    evtSource.addEventListener('tabela_atualizada', (e) => {
-      Estado.tabelaPrecos = JSON.parse(e.data);
-      atualizarCamposTabelaPrecos();
-    });
-  } catch (err) {
-    console.warn('SSE indisponível, operando via polling local:', err);
-  }
-}
-
-// ====================================================================
-// PROCESSAMENTO DE LEITURA RFID (ARDUINO / USB / SIMULADOR)
+// LEITURA SERIAL DE RFID (ARDUINO / USB)
 // ====================================================================
 function configurarOuvinteSerialRFID() {
   window.addEventListener('rfid-lido', (e) => {
@@ -141,9 +510,8 @@ async function processarLeituraRFID(rfid) {
   if (!rfid) return;
   Estado.ultimoRfidLido = rfid;
 
-  // Se o usuário estiver na tela de cadastro e o campo estiver vazio ou em foco
   const inputCadRfid = document.getElementById('cad-rfid');
-  if (document.getElementById('tab-veiculos').classList.contains('active')) {
+  if (document.getElementById('tab-veiculos')?.classList.contains('active')) {
     inputCadRfid.value = rfid;
     mostrarToast(`Código RFID ${rfid} capturado para cadastro!`, 'info');
     document.getElementById('cad-nome').focus();
@@ -159,35 +527,40 @@ async function processarLeituraRFID(rfid) {
     const dados = await res.json();
 
     if (!dados.registrado) {
-      // RFID NÃO CADASTRADO
       arduinoSerial.enviarComando('DENIED');
       mostrarToast(dados.mensagem, 'warning');
 
-      if (confirm(`Tag RFID ${rfid} não cadastrada no sistema!\n\nDeseja cadastrar agora para associar ao titular e veículo?`)) {
-        mudarAba('tab-veiculos');
-        inputCadRfid.value = rfid;
-        document.getElementById('cad-nome').focus();
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        if (confirm(`Tag RFID ${rfid} não cadastrada!\n\nDeseja cadastrar agora para associar ao titular e veículo?`)) {
+          mudarAba('tab-veiculos');
+          inputCadRfid.value = rfid;
+          document.getElementById('cad-nome').focus();
+        }
       }
       return;
     }
 
     if (dados.acao === 'ENTRADA_REGISTRADA') {
-      // ENTRADA LIBERADA COM SUCESSO!
-      // Envia comando para abrir a cancela no Arduino
       arduinoSerial.enviarComando('OPEN');
       mostrarToast(`✅ Entrada autorizada: ${dados.veiculo.placa} - Temporizador iniciado!`, 'success');
 
-      carregarSessoesAtivas();
-      carregarStatusDashboard();
-      mudarAba('tab-patio');
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        carregarSessoesAtivas();
+        carregarStatusDashboard();
+        mudarAba('tab-patio');
+      } else if (Estado.usuario && Estado.usuario.role === 'cliente') {
+        carregarDadosPortalCliente(dados.veiculo.rfid);
+      }
       return;
     }
 
     if (dados.acao === 'JA_ESTACIONADO') {
-      // VEÍCULO JÁ ESTÁ NO ESTACIONAMENTO -> VAI PARA PAGAMENTO!
-      mostrarToast(`Veículo ${dados.veiculo.placa} já no pátio! Abrindo tela de Pagamento...`, 'info');
-      mudarAba('tab-pagamento');
-      selecionarSessaoParaPagamento(dados.sessao.id);
+      mostrarToast(`Veículo ${dados.veiculo.placa} já no pátio!`, 'info');
+
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        mudarAba('tab-pagamento');
+        selecionarSessaoParaPagamento(dados.sessao.id);
+      }
       return;
     }
   } catch (err) {
@@ -197,7 +570,7 @@ async function processarLeituraRFID(rfid) {
 }
 
 // ====================================================================
-// CARREGAMENTO DE DADOS (API)
+// CARREGAMENTO DE DADOS (ADMIN)
 // ====================================================================
 async function carregarStatusDashboard() {
   try {
@@ -230,19 +603,21 @@ async function carregarTabelaPrecos() {
 function atualizarCamposTabelaPrecos() {
   const t = Estado.tabelaPrecos;
   if (!t) return;
-  document.getElementById('tab-tolerancia').value = t.toleranciaMinutos;
-  document.getElementById('tab-primeira-hora').value = Number(t.primeiraHora).toFixed(2);
-  document.getElementById('tab-modo-cobranca').value = t.modoCobranca || 'hora_fracao';
-  document.getElementById('tab-fracao-15min').value = Number(t.fracao15min).toFixed(2);
-  document.getElementById('tab-hora-adicional').value = Number(t.horaAdicional).toFixed(2);
-  document.getElementById('tab-valor-diaria').value = Number(t.valorDiaria).toFixed(2);
-  document.getElementById('tab-limite-diaria').value = t.limiteHorasDiaria;
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
 
-  // Atualiza pré-visualização explicativa
-  document.getElementById('prev-tolerancia').innerText = t.toleranciaMinutos;
-  document.getElementById('prev-primeira-hora').innerText = Number(t.primeiraHora).toFixed(2);
-  document.getElementById('prev-limite-diaria').innerText = t.limiteHorasDiaria;
-  document.getElementById('prev-diaria').innerText = Number(t.valorDiaria).toFixed(2);
+  setVal('tab-tolerancia', t.toleranciaMinutos);
+  setVal('tab-primeira-hora', Number(t.primeiraHora).toFixed(2));
+  setVal('tab-modo-cobranca', t.modoCobranca || 'hora_fracao');
+  setVal('tab-fracao-15min', Number(t.fracao15min).toFixed(2));
+  setVal('tab-hora-adicional', Number(t.horaAdicional).toFixed(2));
+  setVal('tab-valor-diaria', Number(t.valorDiaria).toFixed(2));
+  setVal('tab-limite-diaria', t.limiteHorasDiaria);
+
+  setText('prev-tolerancia', t.toleranciaMinutos);
+  setText('prev-primeira-hora', Number(t.primeiraHora).toFixed(2));
+  setText('prev-limite-diaria', t.limiteHorasDiaria);
+  setText('prev-diaria', Number(t.valorDiaria).toFixed(2));
 }
 
 async function carregarVeiculos() {
@@ -321,13 +696,12 @@ function renderizarPatio(sessoes) {
           <div class="vehicle-info-block">
             <h4>${s.veiculo.nome}</h4>
             <p><i class="fa-solid fa-id-card"></i> CPF: ${s.veiculo.cpf}</p>
-            <p><i class="fa-brands fa-whatsapp"></i> ${s.veiculo.contato}</p>
+            <p><i class="fa-solid fa-phone"></i> ${s.veiculo.contato}</p>
             <p><i class="fa-regular fa-clock"></i> Entrada: ${new Date(s.entrada).toLocaleTimeString()}</p>
           </div>
         </div>
 
         <div>
-          <!-- Caixa do Temporizador Dinâmico -->
           <div class="timer-box">
             <div>
               <div class="timer-label"><i class="fa-solid fa-stopwatch"></i> Tempo Estacionado</div>
@@ -353,14 +727,14 @@ function renderizarPatio(sessoes) {
   }).join('');
 }
 
-// Loop contínuo que atualiza os cronômetros e valores a cada segundo
+// LOOP CONTÍNUO QUE ATUALIZA TODOS OS CRONÔMETROS AO VIVO A CADA SEGUNDO
 function iniciarLoopCronometro() {
   if (Estado.intervaloCronometro) clearInterval(Estado.intervaloCronometro);
 
   Estado.intervaloCronometro = setInterval(() => {
     const agora = Date.now();
 
-    // 1. Atualiza os cards no pátio
+    // 1. Atualiza os cards no pátio do Admin
     const cards = document.querySelectorAll('.vehicle-card');
     cards.forEach(card => {
       const entrada = Number(card.getAttribute('data-entrada'));
@@ -377,7 +751,7 @@ function iniciarLoopCronometro() {
       }
     });
 
-    // 2. Se a tela de Pagamento estiver com uma sessão ativa aberta, atualiza o cronômetro do pagamento
+    // 2. Atualiza a tela de pagamento da guarita (se aberta)
     if (Estado.sessaoSelecionadaId) {
       const sessao = Estado.sessoesAtivas.find(s => s.id === Estado.sessaoSelecionadaId);
       if (sessao) {
@@ -399,11 +773,16 @@ function iniciarLoopCronometro() {
         atualizarCalculoTroco(final);
       }
     }
+
+    // 3. Atualiza o Portal do Cliente (se o cliente estiver logado e seu carro estiver no pátio)
+    if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.dadosClientePortal && Estado.dadosClientePortal.estacionado) {
+      atualizarValoresTempoCliente(Estado.dadosClientePortal.sessaoAtiva.entrada);
+    }
   }, 1000);
 }
 
 // ====================================================================
-// FUNCIONALIDADE DO SITE: TELA DE PAGAMENTO
+// TELA DE PAGAMENTO (GUARITA / ADMIN)
 // ====================================================================
 function configurarEventosPagamento() {
   const selectSessao = document.getElementById('select-sessao-pagamento');
@@ -411,8 +790,7 @@ function configurarEventosPagamento() {
     selecionarSessaoParaPagamento(e.target.value);
   });
 
-  // Métodos de Pagamento (PIX, Cartão, Dinheiro)
-  const methodOptions = document.querySelectorAll('.method-option');
+  const methodOptions = document.querySelectorAll('.method-option[data-method]');
   methodOptions.forEach(opt => {
     opt.addEventListener('click', () => {
       methodOptions.forEach(o => o.classList.remove('selected'));
@@ -435,25 +813,18 @@ function configurarEventosPagamento() {
     });
   });
 
-  // Cálculo de troco ao digitar valor recebido
   const inputDinheiro = document.getElementById('input-dinheiro-recebido');
   inputDinheiro?.addEventListener('input', () => {
     const valorAtual = obterValorTotalAtual();
     atualizarCalculoTroco(valorAtual);
   });
 
-  // Recalcula se o operador aplicar desconto ou acréscimo
-  document.getElementById('input-desconto')?.addEventListener('input', () => {
-    recalcularTelaPagamento();
-  });
-  document.getElementById('input-acrescimo')?.addEventListener('input', () => {
-    recalcularTelaPagamento();
-  });
+  document.getElementById('input-desconto')?.addEventListener('input', recalcularTelaPagamento);
+  document.getElementById('input-acrescimo')?.addEventListener('input', recalcularTelaPagamento);
 
-  // BOTÃO PRINCIPAL: FINALIZAR TEMPORIZADOR E REALIZAR PAGAMENTO
   const btnFinalizar = document.getElementById('btn-finalizar-pagamento');
   btnFinalizar?.addEventListener('click', async () => {
-    await finalizarPagamento();
+    await finalizarPagamentoGuarita();
   });
 }
 
@@ -505,7 +876,6 @@ function selecionarSessaoParaPagamento(sessaoId) {
     return;
   }
 
-  // Preenche dados do veículo
   document.getElementById('pag-veiculo-placa').innerText = sessao.veiculo.placa;
   document.getElementById('pag-veiculo-rfid').innerText = `RFID: ${sessao.rfid}`;
   document.getElementById('pag-veiculo-titular').innerText = sessao.veiculo.nome;
@@ -557,8 +927,7 @@ function atualizarCalculoTroco(valorTotal) {
   lblTroco.innerText = formatarMoeda(troco);
 }
 
-// Finalização da Sessão, Parada do Temporizador e Registro do Pagamento
-async function finalizarPagamento() {
+async function finalizarPagamentoGuarita() {
   if (!Estado.sessaoSelecionadaId) {
     mostrarToast('Selecione um veículo para finalizar.', 'warning');
     return;
@@ -574,7 +943,7 @@ async function finalizarPagamento() {
   try {
     const btnFinalizar = document.getElementById('btn-finalizar-pagamento');
     btnFinalizar.disabled = true;
-    btnFinalizar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando Pagamento...';
+    btnFinalizar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando...';
 
     const payload = {
       sessaoId: sessao.id,
@@ -600,16 +969,13 @@ async function finalizarPagamento() {
       return;
     }
 
-    // 1. Envia comando ao Arduino para abrir a cancela de saída!
+    // Abre cancela de saída no Arduino
     arduinoSerial.enviarComando('OPEN');
 
-    // 2. Mostra mensagem de sucesso
     mostrarToast('✅ Pagamento registrado com sucesso! Cancela liberada.', 'success');
 
-    // 3. Abre o comprovante de pagamento / recibo
     abrirModalRecibo(resposta.comprovante);
 
-    // 4. Limpa a seleção e atualiza dados
     Estado.sessaoSelecionadaId = null;
     selecionarSessaoParaPagamento(null);
     document.getElementById('input-dinheiro-recebido').value = '';
@@ -657,7 +1023,7 @@ function abrirModalRecibo(comprovante) {
 }
 
 // ====================================================================
-// CADASTRO DE VEÍCULOS / ASSOCIAÇÃO RFID
+// FORMULÁRIO DE CADASTRO DE VEÍCULOS (COM LOGIN E SENHA)
 // ====================================================================
 function configurarEventosForms() {
   const formVeiculo = document.getElementById('form-cadastrar-veiculo');
@@ -669,12 +1035,14 @@ function configurarEventosForms() {
     const placa = document.getElementById('cad-placa').value.trim().toUpperCase();
     const contato = document.getElementById('cad-contato').value.trim();
     const cpf = document.getElementById('cad-cpf').value.trim();
+    const login = document.getElementById('cad-login').value.trim().toUpperCase() || placa;
+    const senha = document.getElementById('cad-senha').value.trim() || '123';
 
     try {
       const res = await fetch('/api/veiculos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rfid, nome, placa, contato, cpf })
+        body: JSON.stringify({ rfid, nome, placa, contato, cpf, login, senha })
       });
       const dados = await res.json();
 
@@ -683,8 +1051,9 @@ function configurarEventosForms() {
         return;
       }
 
-      mostrarToast('Veículo e RFID cadastrados com sucesso!', 'success');
+      mostrarToast('Veículo e credenciais cadastradas com sucesso!', 'success');
       formVeiculo.reset();
+      document.getElementById('cad-senha').value = '123';
       carregarVeiculos();
     } catch (err) {
       console.error('Erro ao cadastrar:', err);
@@ -692,7 +1061,6 @@ function configurarEventosForms() {
     }
   });
 
-  // Botão capturar RFID lido
   document.getElementById('btn-capturar-rfid')?.addEventListener('click', () => {
     if (Estado.ultimoRfidLido) {
       document.getElementById('cad-rfid').value = Estado.ultimoRfidLido;
@@ -704,16 +1072,17 @@ function configurarEventosForms() {
 
   document.getElementById('btn-limpar-cad')?.addEventListener('click', () => {
     formVeiculo.reset();
+    document.getElementById('cad-senha').value = '123';
   });
 
-  // Busca de veículos
   document.getElementById('busca-veiculo')?.addEventListener('input', (e) => {
     const termo = e.target.value.toLowerCase();
     const filtrados = Estado.veiculos.filter(v =>
       v.nome.toLowerCase().includes(termo) ||
       v.placa.toLowerCase().includes(termo) ||
       v.cpf.toLowerCase().includes(termo) ||
-      v.rfid.toLowerCase().includes(termo)
+      v.rfid.toLowerCase().includes(termo) ||
+      (v.login && v.login.toLowerCase().includes(termo))
     );
     renderizarTabelaVeiculos(filtrados);
   });
@@ -750,7 +1119,6 @@ function configurarEventosForms() {
     }
   });
 
-  // Máscaras de digitação simples para facilitar uso
   aplicarMascarasInputs();
 }
 
@@ -759,7 +1127,7 @@ function renderizarTabelaVeiculos(lista) {
   if (!tbody) return;
 
   if (lista.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Nenhum veículo encontrado.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Nenhum veículo cadastrado.</td></tr>';
     return;
   }
 
@@ -768,8 +1136,8 @@ function renderizarTabelaVeiculos(lista) {
       <td><span class="rfid-tag-badge">${v.rfid}</span></td>
       <td><span class="car-badge" style="font-size: 0.85rem; padding: 0.2rem 0.5rem;">${v.placa}</span></td>
       <td><strong>${v.nome}</strong></td>
-      <td>${v.cpf}</td>
       <td>${v.contato}</td>
+      <td><code>${v.login || v.placa}</code> / •••</td>
       <td style="text-align: right;">
         <button class="btn btn-outline btn-sm" title="Simular Entrada com este RFID" onclick="processarLeituraRFID('${v.rfid}')">
           <i class="fa-solid fa-play text-primary"></i>
@@ -783,7 +1151,7 @@ function renderizarTabelaVeiculos(lista) {
 }
 
 async function excluirVeiculo(rfid) {
-  if (!confirm(`Deseja realmente remover o veículo cadastrado sob a tag RFID ${rfid}?`)) return;
+  if (!confirm(`Deseja realmente remover o veículo com a tag RFID ${rfid}?`)) return;
 
   try {
     const res = await fetch(`/api/veiculos/${rfid}`, { method: 'DELETE' });
@@ -815,7 +1183,7 @@ async function cancelarSessao(sessaoId) {
 }
 
 // ====================================================================
-// RENDERIZAÇÃO: HISTÓRICO DE SAÍDAS
+// RENDERIZAÇÃO: HISTÓRICO GERAL (ADMIN)
 // ====================================================================
 function renderizarTabelaHistorico(lista) {
   const tbody = document.getElementById('tabela-historico-body');
@@ -853,7 +1221,10 @@ function renderizarTabelaHistorico(lista) {
 }
 
 function reimprimirRecibo(sessaoId) {
-  const s = Estado.historico.find(h => h.id === sessaoId);
+  let s = Estado.historico.find(h => h.id === sessaoId);
+  if (!s && Estado.dadosClientePortal && Estado.dadosClientePortal.historico) {
+    s = Estado.dadosClientePortal.historico.find(h => h.id === sessaoId);
+  }
   if (!s) return;
 
   const comprovante = {
@@ -878,7 +1249,7 @@ function reimprimirRecibo(sessaoId) {
 }
 
 // ====================================================================
-// SIMULADOR DE RFID (TESTES SEM HARDWARE)
+// SIMULADOR DE RFID
 // ====================================================================
 function configurarSimulador() {
   const btnAbrir = document.getElementById('btn-abrir-simulador');
@@ -922,15 +1293,15 @@ function simularTagRapida(rfid) {
 }
 
 // ====================================================================
-// UTILITÁRIOS: CÁLCULOS E FORMATAÇÃO
+// CÁLCULOS, TEMPO E FORMATAÇÃO
 // ====================================================================
 function calcularValorTempoReal(entradaMs, saidaMs) {
   const diffMs = Math.max(0, saidaMs - entradaMs);
   const totalMinutos = Math.max(1, Math.ceil(diffMs / 60000));
 
   const t = Estado.tabelaPrecos || {};
-  const tolerancia = Number(t.toleranciaMinutos) || 15;
-  const primeiraHora = Number(t.primeiraHora) || 10.0;
+  const tolerancia = Number(t.toleranciaMinutos) || 10;
+  const primeiraHora = Number(t.primeiraHora) || 5.0;
   const horaAdicional = Number(t.horaAdicional) || 5.0;
   const fracao15min = Number(t.fracao15min) || 2.0;
   const valorDiaria = Number(t.valorDiaria) || 50.0;
@@ -1001,7 +1372,6 @@ function fecharModal(id) {
   if (modal) modal.classList.remove('active');
 }
 
-// Fechar modais ao clicar no fundo
 document.querySelectorAll('.modal-overlay').forEach(modal => {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
@@ -1033,13 +1403,17 @@ function mostrarToast(mensagem, tipo = 'info') {
   }, 4000);
 }
 
-// Funções de formatação de máscaras
 function aplicarMascarasInputs() {
   const inputPlaca = document.getElementById('cad-placa');
   inputPlaca?.addEventListener('input', (e) => {
     let v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (v.length > 7) v = v.slice(0, 7);
     e.target.value = v;
+
+    const loginInput = document.getElementById('cad-login');
+    if (loginInput && !loginInput.value) {
+      loginInput.placeholder = `Padrão: ${v}`;
+    }
   });
 
   const inputCpf = document.getElementById('cad-cpf');
@@ -1070,4 +1444,3 @@ function aplicarMascarasInputs() {
     e.target.value = v;
   });
 }
-

@@ -9,497 +9,719 @@
 </head>
 <body>
 
-  <!-- Top Navbar -->
-  <header class="navbar">
-    <div class="nav-container">
-      <div class="brand">
-        <div class="brand-icon">
+  <!-- ============================================================ -->
+  <!-- TELA DE LOGIN & SELEÇÃO DE CARGOS                            -->
+  <!-- ============================================================ -->
+  <div id="tela-login" class="login-screen-wrapper">
+    <div class="login-card">
+      <div class="login-card-header">
+        <div class="login-brand-icon">
           <i class="fa-solid fa-square-parking"></i>
         </div>
-        <div class="brand-info">
-          <h1>SmartPark RFID</h1>
-          <span>Projeto PEX 2° Período • Engenharia & Computação</span>
-        </div>
+        <h2 style="font-size: 1.35rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">SmartPark RFID</h2>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Sistema de Estacionamento • Projeto PEX</p>
       </div>
 
-      <!-- Navigation Tabs -->
-      <nav class="tabs-nav">
-        <button class="tab-btn active" data-tab="tab-patio">
-          <i class="fa-solid fa-car-side"></i> Pátio em Tempo Real
-        </button>
-        <button class="tab-btn" data-tab="tab-pagamento" id="btn-tab-pagamento">
-          <i class="fa-solid fa-cash-register"></i> Pagamento
-        </button>
-        <button class="tab-btn" data-tab="tab-veiculos">
-          <i class="fa-solid fa-id-card"></i> Cadastro RFID
-        </button>
-        <button class="tab-btn" data-tab="tab-tabela">
-          <i class="fa-solid fa-receipt"></i> Tabela de Preços
-        </button>
-        <button class="tab-btn" data-tab="tab-historico">
-          <i class="fa-solid fa-clock-rotate-left"></i> Histórico
-        </button>
-      </nav>
-
-      <!-- Arduino Status & Quick Simulator -->
-      <div class="nav-actions">
-        <button id="arduino-status-badge" class="arduino-badge disconnected" title="Clique para conectar ou desconectar a placa Arduino via USB">
-          <span class="status-dot"></span>
-          <span id="arduino-status-text">Conectar Arduino</span>
-        </button>
-
-        <button class="btn btn-outline btn-sm" id="btn-abrir-simulador" title="Testar leitura de RFID sem precisar da placa">
-          <i class="fa-solid fa-microchip"></i> Simular RFID
-        </button>
-      </div>
-    </div>
-  </header>
-
-  <!-- Main Content Body -->
-  <main class="main-content">
-
-    <!-- Top Real-time Statistics -->
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-icon blue">
-          <i class="fa-solid fa-car"></i>
-        </div>
-        <div class="stat-info">
-          <p>Veículos no Pátio</p>
-          <h3 id="stat-ocupados">0</h3>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-icon green">
-          <i class="fa-solid fa-hand-holding-dollar"></i>
-        </div>
-        <div class="stat-info">
-          <p>Faturamento Hoje</p>
-          <h3 id="stat-faturamento">R$ 0,00</h3>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-icon amber">
-          <i class="fa-solid fa-address-card"></i>
-        </div>
-        <div class="stat-info">
-          <p>Veículos Cadastrados</p>
-          <h3 id="stat-cadastrados">0</h3>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-icon purple">
-          <i class="fa-solid fa-circle-check"></i>
-        </div>
-        <div class="stat-info">
-          <p>Saídas Pagas Hoje</p>
-          <h3 id="stat-saidas">0</h3>
-        </div>
-      </div>
-    </div>
-
-    <!-- ============================================================ -->
-    <!-- ABA 1: PÁTIO EM TEMPO REAL (VEÍCULOS COM CRONÔMETRO ATIVO)   -->
-    <!-- ============================================================ -->
-    <section id="tab-patio" class="tab-pane active">
-      <div class="section-header">
-        <div class="section-title">
-          <i class="fa-solid fa-stopwatch text-primary"></i> Veículos Estacionados com Temporizador Ativo
-        </div>
-        <div class="section-actions">
-          <button class="btn btn-outline btn-sm" id="btn-atualizar-patio">
-            <i class="fa-solid fa-rotate"></i> Atualizar
+      <div class="login-card-body">
+        <div class="login-role-tabs">
+          <button type="button" class="login-role-btn active" id="btn-role-cliente">
+            <i class="fa-solid fa-car"></i> Cliente / Veículo
           </button>
-          <button class="btn btn-primary btn-sm" id="btn-novo-veiculo-atalho">
-            <i class="fa-solid fa-plus"></i> Novo Cadastro
+          <button type="button" class="login-role-btn" id="btn-role-admin">
+            <i class="fa-solid fa-user-shield"></i> Administrador
           </button>
         </div>
-      </div>
 
-      <!-- Grid com os cartões dos carros estacionados -->
-      <div id="patio-grid" class="vehicles-grid">
-        <!-- Renderizado dinamicamente via JS -->
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- ABA 2: TELA DE PAGAMENTO (FINALIZA TEMPO E COBRA POR TABELA) -->
-    <!-- ============================================================ -->
-    <section id="tab-pagamento" class="tab-pane">
-      <div class="section-header">
-        <div class="section-title">
-          <i class="fa-solid fa-cash-register text-success"></i> Pagamento de Estacionamento
-        </div>
-        <div class="section-actions">
-          <span class="badge" style="background: #e0f2fe; color: #0369a1; padding: 0.35rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.82rem;">
-            <i class="fa-solid fa-bolt"></i> Aproxime o RFID no leitor para selecionar automaticamente
-          </span>
-        </div>
-      </div>
-
-      <div class="payment-layout">
-        <!-- Coluna Esquerda: Seleção de Veículo & Dados da Estadia -->
-        <div class="payment-card">
-          <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
-            <i class="fa-solid fa-car-rear text-primary"></i> 1. Selecionar Veículo Estacionado
-          </h3>
-
-          <div class="checkout-session-selector form-group">
-            <label class="form-label">Veículo no Pátio (Placa, Titular ou RFID):</label>
-            <select id="select-sessao-pagamento" class="form-control" style="font-size: 0.95rem; font-weight: 600;">
-              <option value="">-- Selecione um veículo estacionado --</option>
-            </select>
+        <form id="form-login">
+          <div class="form-group">
+            <label class="form-label" id="lbl-login-input">Placa do Veículo, CPF ou Login:</label>
+            <div style="position: relative;">
+              <input type="text" id="input-login" class="form-control" placeholder="Ex: BRA2E19 ou seu CPF" required autofocus style="text-transform: uppercase;">
+            </div>
+            <div class="form-help" id="help-login-input">Digite a placa do seu carro ou CPF cadastrado.</div>
           </div>
 
-          <!-- Card com Detalhes do Veículo e Temporizador -->
-          <div id="box-detalhes-veiculo" style="display: none;">
-            <div style="background: #f1f5f9; padding: 1rem; border-radius: 10px; margin-bottom: 1.25rem; border: 1px solid #cbd5e1;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                <span class="car-badge" id="pag-veiculo-placa">ABC1D23</span>
-                <span class="rfid-tag-badge" id="pag-veiculo-rfid">RFID: ----</span>
+          <div class="form-group">
+            <label class="form-label">Senha de Acesso:</label>
+            <input type="password" id="input-senha" class="form-control" placeholder="Digite sua senha" required>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-lg" style="width: 100%; margin-top: 1rem;" id="btn-submit-login">
+            <i class="fa-solid fa-right-to-bracket"></i> Acessar Sistema
+          </button>
+        </form>
+
+        <!-- Botões de Demonstração Rápida -->
+        <div class="login-demo-pills">
+          <p><i class="fa-solid fa-wand-magic-sparkles"></i> Acesso Rápido para Apresentação:</p>
+          <div class="demo-buttons-row">
+            <button type="button" class="btn btn-outline btn-sm" id="btn-demo-admin" title="Entrar como Admin da Guarita">
+              <i class="fa-solid fa-lock text-primary"></i> Demo Admin
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" id="btn-demo-cliente" title="Entrar como Cliente">
+              <i class="fa-solid fa-car text-success"></i> Demo Cliente
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- APLICAÇÃO PRINCIPAL (EXIBIDA APÓS O LOGIN)                   -->
+  <!-- ============================================================ -->
+  <div id="tela-principal-app" style="display: none;">
+    <!-- Top Navbar -->
+    <header class="navbar">
+      <div class="nav-container">
+        <div class="brand">
+          <div class="brand-icon">
+            <i class="fa-solid fa-square-parking"></i>
+          </div>
+          <div class="brand-info">
+            <h1>SmartPark RFID</h1>
+            <span id="nav-subtitle">Painel de Controle</span>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs (Apenas Visíveis para Admin) -->
+        <nav class="tabs-nav" id="admin-nav-tabs">
+          <button class="tab-btn active" data-tab="tab-patio">
+            <i class="fa-solid fa-car-side"></i> Pátio
+          </button>
+          <button class="tab-btn" data-tab="tab-pagamento" id="btn-tab-pagamento">
+            <i class="fa-solid fa-cash-register"></i> Pagamento
+          </button>
+          <button class="tab-btn" data-tab="tab-veiculos">
+            <i class="fa-solid fa-id-card"></i> Cadastro RFID
+          </button>
+          <button class="tab-btn" data-tab="tab-tabela">
+            <i class="fa-solid fa-receipt"></i> Tabela
+          </button>
+          <button class="tab-btn" data-tab="tab-historico">
+            <i class="fa-solid fa-clock-rotate-left"></i> Histórico
+          </button>
+        </nav>
+
+        <!-- User Profile & Hardware Actions -->
+        <div class="nav-actions">
+          <button id="arduino-status-badge" class="arduino-badge disconnected" title="Conectar ou desconectar Arduino via USB">
+            <span class="status-dot"></span>
+            <span id="arduino-status-text">Conectar Arduino</span>
+          </button>
+
+          <button class="btn btn-outline btn-sm" id="btn-abrir-simulador" title="Testar leitura de RFID">
+            <i class="fa-solid fa-microchip"></i> Simular RFID
+          </button>
+
+          <!-- Perfil do Usuário Logado -->
+          <div class="user-profile-badge">
+            <div class="user-profile-avatar" id="user-avatar"><i class="fa-solid fa-user"></i></div>
+            <div>
+              <div id="user-display-name" style="font-size: 0.82rem; font-weight: 700; line-height: 1.2;">Admin</div>
+              <div id="user-display-role" style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">ADMINISTRADOR</div>
+            </div>
+            <button class="btn-logout" id="btn-logout" title="Sair do Sistema">
+              <i class="fa-solid fa-arrow-right-from-bracket"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Body -->
+    <main class="main-content">
+
+      <!-- ============================================================ -->
+      <!-- VISÃO: PORTAL EXCLUSIVO DO CLIENTE (TITULAR DO VEÍCULO)      -->
+      <!-- ============================================================ -->
+      <section id="portal-cliente" class="client-portal-wrapper" style="display: none;">
+        <!-- Card de Identificação do Veículo -->
+        <div class="client-hero-card">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                <span class="car-badge" id="cli-veiculo-placa">ABC1D23</span>
+                <span class="rfid-tag-badge" id="cli-veiculo-rfid">RFID: ----</span>
               </div>
-              <h4 id="pag-veiculo-titular" style="font-size: 1.15rem; margin-bottom: 0.25rem;">Nome do Titular</h4>
-              <p style="font-size: 0.85rem; color: var(--text-muted);"><i class="fa-solid fa-id-badge"></i> CPF: <strong id="pag-veiculo-cpf">---</strong></p>
-              <p style="font-size: 0.85rem; color: var(--text-muted);"><i class="fa-brands fa-whatsapp"></i> Contato: <strong id="pag-veiculo-contato">---</strong></p>
+              <h2 id="cli-titular-nome" style="font-size: 1.45rem; font-weight: 800; color: var(--text-main); margin-bottom: 0.25rem;">Nome do Cliente</h2>
+              <p style="font-size: 0.88rem; color: var(--text-muted);">
+                <i class="fa-solid fa-id-card"></i> CPF: <span id="cli-titular-cpf">---</span> • 
+                <i class="fa-solid fa-phone"></i> <span id="cli-titular-contato">---</span>
+              </p>
             </div>
 
-            <!-- Dados Cronometrados da Estadia -->
+            <div>
+              <span id="cli-status-badge" class="client-status-badge outside">
+                <i class="fa-solid fa-circle-dot"></i> Fora do Estacionamento
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bloco 1: Quando o Carro ESTÁ ESTACIONADO (Temporizador & Pagamento) -->
+        <div id="cli-bloco-estacionado" style="display: none;">
+          <!-- Hero do Cronômetro em Tempo Real -->
+          <div class="client-timer-hero">
+            <p style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; font-weight: 600;">
+              <i class="fa-solid fa-stopwatch fa-spin"></i> Temporizador de Estadia Ativo
+            </p>
+            <div class="client-timer-display" id="cli-cronometro-tempo">00:00:00</div>
+            <p style="font-size: 0.88rem; color: #cbd5e1;">
+              Entrada registrada às: <strong id="cli-hora-entrada" style="color: white;">--:--:--</strong>
+            </p>
+          </div>
+
+          <!-- Checkout / Pagamento do Veículo pelo Cliente -->
+          <div class="payment-card" style="margin-bottom: 1.5rem;">
+            <div class="section-header" style="margin-bottom: 0.75rem;">
+              <div class="section-title">
+                <i class="fa-solid fa-credit-card text-success"></i> Pagamento do seu Estacionamento
+              </div>
+            </div>
+
             <div class="invoice-summary">
               <div class="invoice-row">
-                <span><i class="fa-regular fa-clock"></i> Horário de Entrada:</span>
-                <strong id="pag-tempo-entrada">--:--:--</strong>
-              </div>
-              <div class="invoice-row">
-                <span><i class="fa-solid fa-flag-checkered"></i> Horário de Saída:</span>
-                <strong id="pag-tempo-saida" style="color: var(--primary);">Agora</strong>
-              </div>
-              <div class="invoice-row" style="background: #fff; padding: 0.75rem; border-radius: 6px; margin: 0.4rem 0;">
-                <span style="font-weight: 600;"><i class="fa-solid fa-stopwatch text-primary"></i> Duração Cronometrada:</span>
-                <span id="pag-cronometro-final" style="font-family: monospace; font-size: 1.2rem; font-weight: 700; color: var(--primary);">00:00:00</span>
-              </div>
-              <div class="invoice-row">
-                <span><i class="fa-solid fa-calculator"></i> Regra da Tabela:</span>
-                <span id="pag-memoria-calculo" style="font-size: 0.82rem; color: var(--text-muted); text-align: right; max-width: 60%;">1ª Hora + adicionais</span>
+                <span><i class="fa-solid fa-calculator"></i> Tabela de Preços Aplicada:</span>
+                <span id="cli-detalhes-calculo" style="font-size: 0.82rem; color: var(--text-muted); text-align: right; max-width: 60%;">1ª Hora + frações</span>
               </div>
               <div class="invoice-row total">
-                <span>Valor Calculado:</span>
-                <span class="price" id="pag-valor-total">R$ 0,00</span>
+                <span>Total a Pagar Agora:</span>
+                <span class="price" id="cli-valor-total">R$ 0,00</span>
+              </div>
+            </div>
+
+            <!-- Seleção de Método de Pagamento pelo Cliente -->
+            <div style="margin-bottom: 1.25rem;">
+              <label class="form-label">Escolha como deseja pagar:</label>
+              <div class="payment-methods" style="grid-template-columns: 1fr 1fr;">
+                <div class="method-option selected" data-cli-method="pix" id="cli-method-pix">
+                  <span class="icon"><i class="fa-brands fa-pix" style="color: #059669;"></i></span>
+                  <span>PIX Instantâneo</span>
+                </div>
+                <div class="method-option" data-cli-method="cartao_credito" id="cli-method-cartao">
+                  <span class="icon"><i class="fa-solid fa-credit-card" style="color: #2563eb;"></i></span>
+                  <span>Cartão de Crédito</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Área PIX do Cliente -->
+            <div id="cli-area-pix" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1.25rem; text-align: center; margin-bottom: 1.25rem;">
+              <p style="font-size: 0.88rem; font-weight: 600; color: #1e293b; margin-bottom: 0.5rem;">
+                <i class="fa-brands fa-pix text-success"></i> Escaneie o QR Code PIX para pagar:
+              </p>
+              <div style="background: white; display: inline-block; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 0.5rem;">
+                <svg width="130" height="130" viewBox="0 0 100 100">
+                  <rect width="100" height="100" fill="#ffffff"/>
+                  <rect x="10" y="10" width="30" height="30" fill="#000000"/>
+                  <rect x="15" y="15" width="20" height="20" fill="#ffffff"/>
+                  <rect x="20" y="20" width="10" height="10" fill="#000000"/>
+                  <rect x="60" y="10" width="30" height="30" fill="#000000"/>
+                  <rect x="65" y="15" width="20" height="20" fill="#ffffff"/>
+                  <rect x="70" y="20" width="10" height="10" fill="#000000"/>
+                  <rect x="10" y="60" width="30" height="30" fill="#000000"/>
+                  <rect x="15" y="65" width="20" height="20" fill="#ffffff"/>
+                  <rect x="20" y="70" width="10" height="10" fill="#000000"/>
+                  <rect x="45" y="15" width="10" height="30" fill="#000000"/>
+                  <rect x="55" y="55" width="25" height="15" fill="#000000"/>
+                  <rect x="45" y="70" width="10" height="20" fill="#000000"/>
+                  <rect x="70" y="75" width="15" height="15" fill="#000000"/>
+                </svg>
+              </div>
+              <p style="font-size: 0.78rem; color: #64748b; margin-bottom: 0.5rem;">Chave Pix: <strong>pex-estacionamento-2026@arduino.org</strong></p>
+              <button type="button" class="btn btn-outline btn-sm" onclick="copiarChavePix()">
+                <i class="fa-solid fa-copy"></i> Copiar Código Pix Copia-e-Cola
+              </button>
+            </div>
+
+            <!-- Botão de Conclusão do Pagamento -->
+            <button type="button" id="btn-cli-confirmar-pagamento" class="btn btn-success btn-lg" style="width: 100%; font-size: 1.1rem; padding: 1rem;">
+              <i class="fa-solid fa-circle-check"></i> Pagar Agora e Liberar Cancela
+            </button>
+            <p style="font-size: 0.78rem; color: var(--text-muted); text-align: center; margin-top: 0.6rem;">
+              Ao confirmar o pagamento, o comando de abertura de cancela de saída é enviado imediatamente.
+            </p>
+          </div>
+        </div>
+
+        <!-- Bloco 2: Quando o Carro NÃO ESTÁ ESTACIONADO -->
+        <div id="cli-bloco-fora" style="display: none;">
+          <div class="empty-state" style="background: white; border: 1px solid var(--border); padding: 3rem 1.5rem; border-radius: var(--radius); margin-bottom: 1.5rem;">
+            <div class="empty-state-icon"><i class="fa-solid fa-circle-check text-success"></i></div>
+            <h3>Veículo Fora do Estacionamento</h3>
+            <p>Seu carro não está no estacionamento neste momento. Ao aproximar a tag RFID na cancela de entrada, seu temporizador iniciará automaticamente!</p>
+            <button type="button" class="btn btn-primary" id="btn-cli-simular-entrada">
+              <i class="fa-solid fa-key"></i> Simular Entrada com minha Tag RFID
+            </button>
+          </div>
+        </div>
+
+        <!-- Histórico Pessoal de Estadias do Cliente -->
+        <div class="payment-card">
+          <div class="section-header" style="margin-bottom: 0.75rem;">
+            <div class="section-title">
+              <i class="fa-solid fa-clock-rotate-left text-primary"></i> Minhas Estadias e Recibos Anteriores
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Recibo</th>
+                  <th>Entrada</th>
+                  <th>Saída</th>
+                  <th>Tempo</th>
+                  <th>Valor Pago</th>
+                  <th>Forma</th>
+                  <th style="text-align: right;">Ação</th>
+                </tr>
+              </thead>
+              <tbody id="cli-historico-tabela-body">
+                <!-- Preenchido via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- VISÃO: PAINEL ADMINISTRATIVO (EXCLUSIVO ADMIN / GUARITA)     -->
+      <!-- ============================================================ -->
+      <div id="portal-admin" style="display: none;">
+
+        <!-- Top Real-time Statistics -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon blue">
+              <i class="fa-solid fa-car"></i>
+            </div>
+            <div class="stat-info">
+              <p>Veículos no Pátio</p>
+              <h3 id="stat-ocupados">0</h3>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon green">
+              <i class="fa-solid fa-hand-holding-dollar"></i>
+            </div>
+            <div class="stat-info">
+              <p>Faturamento Hoje</p>
+              <h3 id="stat-faturamento">R$ 0,00</h3>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon amber">
+              <i class="fa-solid fa-address-card"></i>
+            </div>
+            <div class="stat-info">
+              <p>Veículos Cadastrados</p>
+              <h3 id="stat-cadastrados">0</h3>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon purple">
+              <i class="fa-solid fa-circle-check"></i>
+            </div>
+            <div class="stat-info">
+              <p>Saídas Pagas Hoje</p>
+              <h3 id="stat-saidas">0</h3>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA 1: PÁTIO EM TEMPO REAL -->
+        <section id="tab-patio" class="tab-pane active">
+          <div class="section-header">
+            <div class="section-title">
+              <i class="fa-solid fa-stopwatch text-primary"></i> Veículos Estacionados com Temporizador Ativo
+            </div>
+            <div class="section-actions">
+              <button class="btn btn-outline btn-sm" id="btn-atualizar-patio">
+                <i class="fa-solid fa-rotate"></i> Atualizar
+              </button>
+              <button class="btn btn-primary btn-sm" id="btn-novo-veiculo-atalho">
+                <i class="fa-solid fa-plus"></i> Novo Cadastro
+              </button>
+            </div>
+          </div>
+
+          <div id="patio-grid" class="vehicles-grid">
+            <!-- Renderizado dinamicamente via JS -->
+          </div>
+        </section>
+
+        <!-- ABA 2: TELA DE PAGAMENTO (GUARITA) -->
+        <section id="tab-pagamento" class="tab-pane">
+          <div class="section-header">
+            <div class="section-title">
+              <i class="fa-solid fa-cash-register text-success"></i> Pagamento de Estacionamento (Guarita)
+            </div>
+            <div class="section-actions">
+              <span class="badge" style="background: #e0f2fe; color: #0369a1; padding: 0.35rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.82rem;">
+                <i class="fa-solid fa-bolt"></i> Aproxime o RFID no leitor para selecionar automaticamente
+              </span>
+            </div>
+          </div>
+
+          <div class="payment-layout">
+            <div class="payment-card">
+              <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
+                <i class="fa-solid fa-car-rear text-primary"></i> 1. Selecionar Veículo Estacionado
+              </h3>
+
+              <div class="checkout-session-selector form-group">
+                <label class="form-label">Veículo no Pátio (Placa, Titular ou RFID):</label>
+                <select id="select-sessao-pagamento" class="form-control" style="font-size: 0.95rem; font-weight: 600;">
+                  <option value="">-- Selecione um veículo estacionado --</option>
+                </select>
+              </div>
+
+              <div id="box-detalhes-veiculo" style="display: none;">
+                <div style="background: #f1f5f9; padding: 1rem; border-radius: 10px; margin-bottom: 1.25rem; border: 1px solid #cbd5e1;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span class="car-badge" id="pag-veiculo-placa">ABC1D23</span>
+                    <span class="rfid-tag-badge" id="pag-veiculo-rfid">RFID: ----</span>
+                  </div>
+                  <h4 id="pag-veiculo-titular" style="font-size: 1.15rem; margin-bottom: 0.25rem;">Nome do Titular</h4>
+                  <p style="font-size: 0.85rem; color: var(--text-muted);"><i class="fa-solid fa-id-badge"></i> CPF: <strong id="pag-veiculo-cpf">---</strong></p>
+                  <p style="font-size: 0.85rem; color: var(--text-muted);"><i class="fa-solid fa-phone"></i> Contato: <strong id="pag-veiculo-contato">---</strong></p>
+                </div>
+
+                <div class="invoice-summary">
+                  <div class="invoice-row">
+                    <span><i class="fa-regular fa-clock"></i> Horário de Entrada:</span>
+                    <strong id="pag-tempo-entrada">--:--:--</strong>
+                  </div>
+                  <div class="invoice-row">
+                    <span><i class="fa-solid fa-flag-checkered"></i> Horário de Saída:</span>
+                    <strong id="pag-tempo-saida" style="color: var(--primary);">Agora</strong>
+                  </div>
+                  <div class="invoice-row" style="background: #fff; padding: 0.75rem; border-radius: 6px; margin: 0.4rem 0;">
+                    <span style="font-weight: 600;"><i class="fa-solid fa-stopwatch text-primary"></i> Duração Cronometrada:</span>
+                    <span id="pag-cronometro-final" style="font-family: monospace; font-size: 1.2rem; font-weight: 700; color: var(--primary);">00:00:00</span>
+                  </div>
+                  <div class="invoice-row">
+                    <span><i class="fa-solid fa-calculator"></i> Regra da Tabela:</span>
+                    <span id="pag-memoria-calculo" style="font-size: 0.82rem; color: var(--text-muted); text-align: right; max-width: 60%;">1ª Hora + adicionais</span>
+                  </div>
+                  <div class="invoice-row total">
+                    <span>Valor Calculado:</span>
+                    <span class="price" id="pag-valor-total">R$ 0,00</span>
+                  </div>
+                </div>
+              </div>
+
+              <div id="box-placeholder-veiculo" class="empty-state" style="padding: 2.5rem 1rem;">
+                <i class="fa-solid fa-barcode empty-state-icon" style="font-size: 2.5rem;"></i>
+                <h3>Nenhum veículo selecionado</h3>
+                <p>Aproxime o cartão RFID no leitor ou selecione um veículo na lista acima para calcular o valor da estadia.</p>
+              </div>
+            </div>
+
+            <div class="payment-card">
+              <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
+                <i class="fa-solid fa-wallet text-success"></i> 2. Forma de Pagamento
+              </h3>
+
+              <div class="payment-methods">
+                <div class="method-option selected" data-method="pix">
+                  <span class="icon"><i class="fa-brands fa-pix" style="color: #059669;"></i></span>
+                  <span>PIX</span>
+                </div>
+                <div class="method-option" data-method="cartao_credito">
+                  <span class="icon"><i class="fa-solid fa-credit-card" style="color: #2563eb;"></i></span>
+                  <span>Cartão Crédito</span>
+                </div>
+                <div class="method-option" data-method="cartao_debito">
+                  <span class="icon"><i class="fa-solid fa-credit-card" style="color: #7c3aed;"></i></span>
+                  <span>Cartão Débito</span>
+                </div>
+                <div class="method-option" data-method="dinheiro">
+                  <span class="icon"><i class="fa-solid fa-money-bill-wave" style="color: #16a34a;"></i></span>
+                  <span>Dinheiro</span>
+                </div>
+              </div>
+
+              <div id="bloco-pix" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1rem; text-align: center; margin-bottom: 1.25rem;">
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+                  <i class="fa-solid fa-qrcode"></i> QR Code PIX (Chave Estacionamento PEX)
+                </div>
+                <div style="background: white; display: inline-block; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                  <svg width="120" height="120" viewBox="0 0 100 100">
+                    <rect width="100" height="100" fill="#ffffff"/>
+                    <rect x="10" y="10" width="30" height="30" fill="#000000"/>
+                    <rect x="15" y="15" width="20" height="20" fill="#ffffff"/>
+                    <rect x="20" y="20" width="10" height="10" fill="#000000"/>
+                    <rect x="60" y="10" width="30" height="30" fill="#000000"/>
+                    <rect x="65" y="15" width="20" height="20" fill="#ffffff"/>
+                    <rect x="70" y="20" width="10" height="10" fill="#000000"/>
+                    <rect x="10" y="60" width="30" height="30" fill="#000000"/>
+                    <rect x="15" y="65" width="20" height="20" fill="#ffffff"/>
+                    <rect x="20" y="70" width="10" height="10" fill="#000000"/>
+                    <rect x="45" y="15" width="10" height="30" fill="#000000"/>
+                    <rect x="55" y="55" width="25" height="15" fill="#000000"/>
+                    <rect x="45" y="70" width="10" height="20" fill="#000000"/>
+                    <rect x="70" y="75" width="15" height="15" fill="#000000"/>
+                  </svg>
+                </div>
+                <p style="font-size: 0.78rem; color: #64748b; margin-top: 0.5rem;">Chave: <strong>pex-estacionamento-2026@arduino.org</strong></p>
+              </div>
+
+              <div id="bloco-dinheiro" style="display: none; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+                <div class="form-group" style="margin-bottom: 0.5rem;">
+                  <label class="form-label">Valor em Dinheiro Recebido (R$):</label>
+                  <input type="number" step="0.50" id="input-dinheiro-recebido" class="form-control" placeholder="Ex: 50.00">
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 1.05rem; font-weight: 700; color: #16a34a; margin-top: 0.5rem;">
+                  <span>Troco a Devolver:</span>
+                  <span id="lbl-troco-calculado">R$ 0,00</span>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.25rem;">
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label class="form-label" style="font-size: 0.78rem;">Desconto (R$):</label>
+                  <input type="number" step="0.50" id="input-desconto" class="form-control" value="0.00" min="0">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label class="form-label" style="font-size: 0.78rem;">Acréscimo / Multa (R$):</label>
+                  <input type="number" step="0.50" id="input-acrescimo" class="form-control" value="0.00" min="0">
+                </div>
+              </div>
+
+              <button id="btn-finalizar-pagamento" class="btn btn-success btn-lg" style="width: 100%; font-size: 1.05rem; padding: 1rem;" disabled>
+                <i class="fa-solid fa-circle-check"></i> Finalizar Temporizador & Pagar
+              </button>
+              <p style="font-size: 0.76rem; color: var(--text-muted); text-align: center; margin-top: 0.6rem;">
+                Ao confirmar, o temporizador do RFID é finalizado e um sinal de abertura de cancela é enviado ao Arduino.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ABA 3: CADASTRO DE VEÍCULOS / ASSOCIAÇÃO RFID COM LOGIN/SENHA -->
+        <section id="tab-veiculos" class="tab-pane">
+          <div class="section-header">
+            <div class="section-title">
+              <i class="fa-solid fa-address-card text-primary"></i> Cadastro de Clientes e Veículos (Associação RFID e Login)
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 400px 1fr; gap: 1.5rem; align-items: flex-start;">
+            <div class="payment-card">
+              <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
+                <i class="fa-solid fa-plus-circle text-primary"></i> Novo Cadastro
+              </h3>
+
+              <form id="form-cadastrar-veiculo">
+                <div class="form-group">
+                  <label class="form-label">Código RFID da Tag / Cartão: *</label>
+                  <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="cad-rfid" class="form-control" placeholder="Ex: A1B2C3D4" required style="font-family: monospace; font-weight: 700; text-transform: uppercase;">
+                    <button type="button" class="btn btn-outline btn-sm" id="btn-capturar-rfid" title="Preenche com o último RFID lido">
+                      <i class="fa-solid fa-magnet"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Nome do Titular: *</label>
+                  <input type="text" id="cad-nome" class="form-control" placeholder="Ex: Roberto Carlos Pereira" required>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Placa do Carro: *</label>
+                  <input type="text" id="cad-placa" class="form-control" placeholder="Ex: ABC1D23" required style="text-transform: uppercase; font-family: monospace; font-weight: bold;">
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Número de Contato: *</label>
+                  <input type="tel" id="cad-contato" class="form-control" placeholder="(11) 98765-4321" required>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">CPF do Titular: *</label>
+                  <input type="text" id="cad-cpf" class="form-control" placeholder="123.456.789-00" required>
+                </div>
+
+                <!-- Credenciais de Acesso do Cliente ao Portal -->
+                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
+                  <div style="font-size: 0.82rem; font-weight: 700; color: #1e40af; margin-bottom: 0.5rem;">
+                    <i class="fa-solid fa-user-lock"></i> Credenciais para o Portal do Cliente:
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0.5rem;">
+                    <label class="form-label" style="font-size: 0.78rem;">Login de Acesso:</label>
+                    <input type="text" id="cad-login" class="form-control" placeholder="Padrão: Placa do Carro" style="text-transform: uppercase;">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label class="form-label" style="font-size: 0.78rem;">Senha de Acesso:</label>
+                    <input type="text" id="cad-senha" class="form-control" placeholder="Padrão: 123" value="123">
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 0.5rem;">
+                  <button type="submit" class="btn btn-primary" style="flex: 1;">
+                    <i class="fa-solid fa-floppy-disk"></i> Salvar Cadastro
+                  </button>
+                  <button type="button" class="btn btn-outline" id="btn-limpar-cad">
+                    Limpar
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div>
+              <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                <div class="search-input-group" style="flex: 1; max-width: 400px;">
+                  <input type="text" id="busca-veiculo" class="form-control" placeholder="Pesquisar por Placa, Nome, CPF ou RFID...">
+                </div>
+                <span style="font-size: 0.85rem; color: var(--text-muted);" id="lbl-total-veiculos-tabela">0 veículos</span>
+              </div>
+
+              <div class="table-responsive">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>RFID</th>
+                      <th>Placa</th>
+                      <th>Titular</th>
+                      <th>Contato</th>
+                      <th>Login / Senha</th>
+                      <th style="text-align: right;">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tabela-veiculos-body">
+                    <!-- Preenchido via JS -->
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
+        </section>
 
-          <div id="box-placeholder-veiculo" class="empty-state" style="padding: 2.5rem 1rem;">
-            <i class="fa-solid fa-barcode empty-state-icon" style="font-size: 2.5rem;"></i>
-            <h3>Nenhum veículo selecionado</h3>
-            <p>Aproxime o cartão RFID no leitor ou selecione um veículo na lista acima para calcular o valor da estadia.</p>
-          </div>
-        </div>
-
-        <!-- Coluna Direita: Forma de Pagamento & Conclusão -->
-        <div class="payment-card">
-          <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
-            <i class="fa-solid fa-wallet text-success"></i> 2. Forma de Pagamento
-          </h3>
-
-          <div class="payment-methods">
-            <div class="method-option selected" data-method="pix">
-              <span class="icon"><i class="fa-brands fa-pix" style="color: #059669;"></i></span>
-              <span>PIX</span>
-            </div>
-            <div class="method-option" data-method="cartao_credito">
-              <span class="icon"><i class="fa-solid fa-credit-card" style="color: #2563eb;"></i></span>
-              <span>Cartão Crédito</span>
-            </div>
-            <div class="method-option" data-method="cartao_debito">
-              <span class="icon"><i class="fa-solid fa-credit-card" style="color: #7c3aed;"></i></span>
-              <span>Cartão Débito</span>
-            </div>
-            <div class="method-option" data-method="dinheiro">
-              <span class="icon"><i class="fa-solid fa-money-bill-wave" style="color: #16a34a;"></i></span>
-              <span>Dinheiro</span>
+        <!-- ABA 4: TABELA DE PREÇOS -->
+        <section id="tab-tabela" class="tab-pane">
+          <div class="section-header">
+            <div class="section-title">
+              <i class="fa-solid fa-receipt text-amber"></i> Tabela de Preços e Regras de Cobrança
             </div>
           </div>
 
-          <!-- Opções específicas por método de pagamento -->
-          <div id="bloco-pix" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1rem; text-align: center; margin-bottom: 1.25rem;">
-            <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">
-              <i class="fa-solid fa-qrcode"></i> QR Code PIX (Chave Estacionamento PEX)
-            </div>
-            <div style="background: white; display: inline-block; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;">
-              <svg width="120" height="120" viewBox="0 0 100 100">
-                <rect width="100" height="100" fill="#ffffff"/>
-                <rect x="10" y="10" width="30" height="30" fill="#000000"/>
-                <rect x="15" y="15" width="20" height="20" fill="#ffffff"/>
-                <rect x="20" y="20" width="10" height="10" fill="#000000"/>
-                <rect x="60" y="10" width="30" height="30" fill="#000000"/>
-                <rect x="65" y="15" width="20" height="20" fill="#ffffff"/>
-                <rect x="70" y="20" width="10" height="10" fill="#000000"/>
-                <rect x="10" y="60" width="30" height="30" fill="#000000"/>
-                <rect x="15" y="65" width="20" height="20" fill="#ffffff"/>
-                <rect x="20" y="70" width="10" height="10" fill="#000000"/>
-                <rect x="45" y="15" width="10" height="30" fill="#000000"/>
-                <rect x="55" y="55" width="25" height="15" fill="#000000"/>
-                <rect x="45" y="70" width="10" height="20" fill="#000000"/>
-                <rect x="70" y="75" width="15" height="15" fill="#000000"/>
-              </svg>
-            </div>
-            <p style="font-size: 0.78rem; color: #64748b; margin-top: 0.5rem;">Chave Aleatória: <strong>pex-estacionamento-2026@arduino.org</strong></p>
-          </div>
+          <div class="payment-layout">
+            <div class="payment-card">
+              <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
+                <i class="fa-solid fa-sliders text-primary"></i> Configurar Valores da Tabela
+              </h3>
 
-          <div id="bloco-dinheiro" style="display: none; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
-            <div class="form-group" style="margin-bottom: 0.5rem;">
-              <label class="form-label">Valor em Dinheiro Recebido (R$):</label>
-              <input type="number" step="0.50" id="input-dinheiro-recebido" class="form-control" placeholder="Ex: 50.00">
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 1.05rem; font-weight: 700; color: #16a34a; margin-top: 0.5rem;">
-              <span>Troco a Devolver:</span>
-              <span id="lbl-troco-calculado">R$ 0,00</span>
-            </div>
-          </div>
+              <form id="form-tabela-precos">
+                <div class="form-group">
+                  <label class="form-label">Tolerância Gratuita (em minutos):</label>
+                  <input type="number" id="tab-tolerancia" class="form-control" min="0" max="60" required>
+                </div>
 
-          <!-- Ajuste opcional de Desconto / Acréscimo -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.25rem;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="form-label" style="font-size: 0.78rem;">Desconto (R$):</label>
-              <input type="number" step="0.50" id="input-desconto" class="form-control" value="0.00" min="0">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="form-label" style="font-size: 0.78rem;">Acréscimo / Multa (R$):</label>
-              <input type="number" step="0.50" id="input-acrescimo" class="form-control" value="0.00" min="0">
-            </div>
-          </div>
+                <div class="form-group">
+                  <label class="form-label">Valor da 1ª Hora (R$):</label>
+                  <input type="number" step="0.50" id="tab-primeira-hora" class="form-control" min="0" required>
+                </div>
 
-          <!-- Botão Principal de Finalização -->
-          <button id="btn-finalizar-pagamento" class="btn btn-success btn-lg" style="width: 100%; font-size: 1.05rem; padding: 1rem;" disabled>
-            <i class="fa-solid fa-circle-check"></i> Finalizar Temporizador & Pagar
-          </button>
-          <p style="font-size: 0.76rem; color: var(--text-muted); text-align: center; margin-top: 0.6rem;">
-            Ao confirmar, o temporizador do RFID é finalizado e um sinal de abertura de cancela é enviado ao Arduino.
-          </p>
-        </div>
-      </div>
-    </section>
+                <div class="form-group">
+                  <label class="form-label">Modo de Cobrança de Horas Excedentes:</label>
+                  <select id="tab-modo-cobranca" class="form-control">
+                    <option value="hora_fracao">Fração de 15 minutos (Recomendado)</option>
+                    <option value="hora_cheia">Hora adicional cheia</option>
+                  </select>
+                </div>
 
-    <!-- ============================================================ -->
-    <!-- ABA 3: CADASTRO DE VEÍCULOS / ASSOCIAÇÃO RFID                 -->
-    <!-- ============================================================ -->
-    <section id="tab-veiculos" class="tab-pane">
-      <div class="section-header">
-        <div class="section-title">
-          <i class="fa-solid fa-address-card text-primary"></i> Cadastro de Clientes e Veículos (Associação RFID)
-        </div>
-      </div>
+                <div class="form-group">
+                  <label class="form-label">Valor de Cada Fração de 15 Minutos (R$):</label>
+                  <input type="number" step="0.25" id="tab-fracao-15min" class="form-control" min="0" required>
+                </div>
 
-      <div style="display: grid; grid-template-columns: 380px 1fr; gap: 1.5rem; align-items: flex-start;">
-        <!-- Formulário de Cadastro -->
-        <div class="payment-card">
-          <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);" id="titulo-form-veiculo">
-            <i class="fa-solid fa-plus-circle text-primary"></i> Novo Cadastro
-          </h3>
+                <div class="form-group">
+                  <label class="form-label">Valor de Hora Adicional Inteira (R$):</label>
+                  <input type="number" step="0.50" id="tab-hora-adicional" class="form-control" min="0" required>
+                </div>
 
-          <form id="form-cadastrar-veiculo">
-            <div class="form-group">
-              <label class="form-label">Código RFID da Tag / Cartão: *</label>
-              <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="cad-rfid" class="form-control" placeholder="Ex: A1B2C3D4" required style="font-family: monospace; font-weight: 700; text-transform: uppercase;">
-                <button type="button" class="btn btn-outline btn-sm" id="btn-capturar-rfid" title="Preenche com o último RFID lido na porta serial">
-                  <i class="fa-solid fa-magnet"></i>
+                <div class="form-group">
+                  <label class="form-label">Valor Máximo da Diária (R$):</label>
+                  <input type="number" step="1.00" id="tab-valor-diaria" class="form-control" min="0" required>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Limite para Aplicação da Diária (horas):</label>
+                  <input type="number" id="tab-limite-diaria" class="form-control" min="1" max="24" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+                  <i class="fa-solid fa-floppy-disk"></i> Salvar Alterações na Tabela
                 </button>
+              </form>
+            </div>
+
+            <div class="payment-card">
+              <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
+                <i class="fa-solid fa-circle-info text-primary"></i> Como o cálculo é realizado
+              </h3>
+
+              <div style="font-size: 0.9rem; line-height: 1.6; color: var(--text-muted);">
+                <p style="margin-bottom: 0.75rem;">
+                  Quando o temporizador de um RFID é finalizado na tela de <strong>Pagamento</strong> ou pelo <strong>Portal do Cliente</strong>:
+                </p>
+
+                <ul style="padding-left: 1.25rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                  <li><strong>Até <span id="prev-tolerancia">10</span> min:</strong> Isento (R$ 0,00).</li>
+                  <li><strong>De 11 a 60 min:</strong> Valor fixo da 1ª hora (R$ <span id="prev-primeira-hora">5,00</span>).</li>
+                  <li><strong>Acima de 60 min:</strong> Cobra a 1ª hora somada às frações de 15 minutos ou horas cheias.</li>
+                  <li><strong>Acima de <span id="prev-limite-diaria">8</span> horas:</strong> Tarifa limitada à diária de R$ <span id="prev-diaria">50,00</span>.</li>
+                </ul>
               </div>
-              <div class="form-help">Passe a tag no leitor RFID ou digite o código hexadecimal.</div>
             </div>
+          </div>
+        </section>
 
-            <div class="form-group">
-              <label class="form-label">Nome do Titular: *</label>
-              <input type="text" id="cad-nome" class="form-control" placeholder="Ex: Roberto Carlos Pereira" required>
+        <!-- ABA 5: HISTÓRICO GERAL DE SAÍDAS -->
+        <section id="tab-historico" class="tab-pane">
+          <div class="section-header">
+            <div class="section-title">
+              <i class="fa-solid fa-clock-rotate-left text-primary"></i> Histórico de Saídas e Pagamentos Concluídos
             </div>
-
-            <div class="form-group">
-              <label class="form-label">Placa do Carro: *</label>
-              <input type="text" id="cad-placa" class="form-control" placeholder="Ex: ABC1D23" required style="text-transform: uppercase; font-family: monospace; font-weight: bold;">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Número de Contato (WhatsApp): *</label>
-              <input type="tel" id="cad-contato" class="form-control" placeholder="(11) 98765-4321" required>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">CPF do Titular: *</label>
-              <input type="text" id="cad-cpf" class="form-control" placeholder="123.456.789-00" required>
-            </div>
-
-            <div style="display: flex; gap: 0.5rem; margin-top: 1.25rem;">
-              <button type="submit" class="btn btn-primary" style="flex: 1;">
-                <i class="fa-solid fa-floppy-disk"></i> Salvar Cadastro
-              </button>
-              <button type="button" class="btn btn-outline" id="btn-limpar-cad">
-                Limpar
+            <div class="section-actions">
+              <button class="btn btn-outline btn-sm" id="btn-atualizar-historico">
+                <i class="fa-solid fa-rotate"></i> Atualizar
               </button>
             </div>
-          </form>
-        </div>
-
-        <!-- Tabela de Veículos Cadastrados -->
-        <div>
-          <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
-            <div class="search-input-group" style="flex: 1; max-width: 400px;">
-              <input type="text" id="busca-veiculo" class="form-control" placeholder="Pesquisar por Placa, Nome, CPF ou RFID...">
-            </div>
-            <span style="font-size: 0.85rem; color: var(--text-muted);" id="lbl-total-veiculos-tabela">0 veículos</span>
           </div>
 
           <div class="table-responsive">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>RFID</th>
+                  <th>ID Cupom</th>
                   <th>Placa</th>
                   <th>Titular</th>
-                  <th>CPF</th>
-                  <th>Contato</th>
-                  <th style="text-align: right;">Ações</th>
+                  <th>Entrada</th>
+                  <th>Saída</th>
+                  <th>Duração</th>
+                  <th>Valor Pago</th>
+                  <th>Método</th>
+                  <th style="text-align: right;">Comprovante</th>
                 </tr>
               </thead>
-              <tbody id="tabela-veiculos-body">
+              <tbody id="tabela-historico-body">
                 <!-- Preenchido via JS -->
               </tbody>
             </table>
           </div>
-        </div>
-      </div>
-    </section>
+        </section>
 
-    <!-- ============================================================ -->
-    <!-- ABA 4: TABELA DE PREÇOS (CONFIGURAÇÃO DE VALORES E TARIFAS)   -->
-    <!-- ============================================================ -->
-    <section id="tab-tabela" class="tab-pane">
-      <div class="section-header">
-        <div class="section-title">
-          <i class="fa-solid fa-receipt text-amber"></i> Tabela de Preços e Regras de Cobrança
-        </div>
-      </div>
+      </div> <!-- /#portal-admin -->
 
-      <div class="payment-layout">
-        <div class="payment-card">
-          <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
-            <i class="fa-solid fa-sliders text-primary"></i> Configurar Valores da Tabela
-          </h3>
-
-          <form id="form-tabela-precos">
-            <div class="form-group">
-              <label class="form-label">Tolerância Gratuita (em minutos):</label>
-              <input type="number" id="tab-tolerancia" class="form-control" min="0" max="60" required>
-              <div class="form-help">Tempo em que o veículo pode sair sem cobrança (ex: 15 min).</div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Valor da 1ª Hora (R$):</label>
-              <input type="number" step="0.50" id="tab-primeira-hora" class="form-control" min="0" required>
-              <div class="form-help">Cobrado após ultrapassar o tempo de tolerância.</div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Modo de Cobrança de Horas Excedentes:</label>
-              <select id="tab-modo-cobranca" class="form-control">
-                <option value="hora_fracao">Fração de 15 minutos (Mais justo)</option>
-                <option value="hora_cheia">Hora adicional cheia</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Valor de Cada Fração de 15 Minutos (R$):</label>
-              <input type="number" step="0.25" id="tab-fracao-15min" class="form-control" min="0" required>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Valor de Hora Adicional Inteira (R$):</label>
-              <input type="number" step="0.50" id="tab-hora-adicional" class="form-control" min="0" required>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Valor Máximo da Diária (R$):</label>
-              <input type="number" step="1.00" id="tab-valor-diaria" class="form-control" min="0" required>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Limite para Aplicação da Diária (horas):</label>
-              <input type="number" id="tab-limite-diaria" class="form-control" min="1" max="24" required>
-            </div>
-
-            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
-              <i class="fa-solid fa-floppy-disk"></i> Salvar Alterações na Tabela
-            </button>
-          </form>
-        </div>
-
-        <!-- Explicação Visual da Tabela -->
-        <div class="payment-card">
-          <h3 style="font-size: 1.05rem; margin-bottom: 1rem; color: var(--text-main);">
-            <i class="fa-solid fa-circle-info text-primary"></i> Como o cálculo é realizado
-          </h3>
-
-          <div style="font-size: 0.9rem; line-height: 1.6; color: var(--text-muted);">
-            <p style="margin-bottom: 0.75rem;">
-              Quando o temporizador de um RFID é finalizado na tela de <strong>Pagamento</strong>, o sistema calcula o tempo total em minutos decorrido desde a leitura de entrada.
-            </p>
-
-            <ul style="padding-left: 1.25rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
-              <li><strong>Até <span id="prev-tolerancia">15</span> min:</strong> Isento (R$ 0,00).</li>
-              <li><strong>De 16 a 60 min:</strong> Valor fixo da 1ª hora (R$ <span id="prev-primeira-hora">10,00</span>).</li>
-              <li><strong>Acima de 60 min:</strong> Cobra a 1ª hora somada às frações de 15 minutos ou horas cheias conforme configurado.</li>
-              <li><strong>Acima de <span id="prev-limite-diaria">8</span> horas:</strong> Tarifa limitada ao teto da diária (R$ <span id="prev-diaria">50,00</span>).</li>
-            </ul>
-
-            <div style="background: #eff6ff; border-left: 4px solid #2563eb; padding: 0.75rem 1rem; border-radius: 4px; font-size: 0.85rem; color: #1e40af;">
-              <strong>Dica Acadêmica:</strong> Todas as alterações salvas são aplicadas em tempo real nos cronômetros e cálculos de fechamento.
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- ABA 5: HISTÓRICO DE SAÍDAS E PAGAMENTOS                      -->
-    <!-- ============================================================ -->
-    <section id="tab-historico" class="tab-pane">
-      <div class="section-header">
-        <div class="section-title">
-          <i class="fa-solid fa-clock-rotate-left text-primary"></i> Histórico de Saídas e Pagamentos Concluídos
-        </div>
-        <div class="section-actions">
-          <button class="btn btn-outline btn-sm" id="btn-atualizar-historico">
-            <i class="fa-solid fa-rotate"></i> Atualizar
-          </button>
-        </div>
-      </div>
-
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>ID Cupom</th>
-              <th>Placa</th>
-              <th>Titular</th>
-              <th>Entrada</th>
-              <th>Saída</th>
-              <th>Duração</th>
-              <th>Valor Pago</th>
-              <th>Método</th>
-              <th style="text-align: right;">Comprovante</th>
-            </tr>
-          </thead>
-          <tbody id="tabela-historico-body">
-            <!-- Preenchido via JS -->
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-  </main>
+    </main>
+  </div> <!-- /#tela-principal-app -->
 
   <!-- ============================================================ -->
   <!-- MODAL: RECIBO / COMPROVANTE DE ESTACIONAMENTO                -->
@@ -555,7 +777,7 @@
   </div>
 
   <!-- ============================================================ -->
-  <!-- MODAL: SIMULADOR DE LEITURA RFID (MUITO ÚTIL PARA TESTES)    -->
+  <!-- MODAL: SIMULADOR DE LEITURA RFID                             -->
   <!-- ============================================================ -->
   <div id="modal-simulador" class="modal-overlay">
     <div class="modal-content">
@@ -565,13 +787,13 @@
       </div>
       <div class="modal-body">
         <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 1rem;">
-          Clique em uma tag cadastrada abaixo para simular a aproximação física do cartão no leitor RFID, ou digite um código novo:
+          Clique em uma tag abaixo para simular a aproximação no leitor RFID:
         </p>
 
         <div class="form-group">
           <label class="form-label">Digitar Código RFID Manualmente:</label>
           <div style="display: flex; gap: 0.5rem;">
-            <input type="text" id="sim-rfid-input" class="form-control" placeholder="Ex: A1B2C3D4 ou 93-B4-5A-1C" style="font-family: monospace; font-weight: 700; text-transform: uppercase;">
+            <input type="text" id="sim-rfid-input" class="form-control" placeholder="Ex: A1B2C3D4" style="font-family: monospace; font-weight: 700; text-transform: uppercase;">
             <button class="btn btn-primary" id="btn-executar-simulacao">
               Simular Leitura
             </button>
@@ -591,7 +813,7 @@
     </div>
   </div>
 
-  <!-- Container para Toast Alerts -->
+  <!-- Container de Notificações Toast -->
   <div id="toast-container"></div>
 
   <!-- Scripts -->
@@ -599,4 +821,3 @@
   <script src="js/app.js"></script>
 </body>
 </html>
-

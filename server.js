@@ -23,13 +23,20 @@ function lerBanco() {
     if (!fs.existsSync(DB_FILE)) {
       const dbInicial = {
         tabelaPrecos: {
-          toleranciaMinutos: 15,
-          primeiraHora: 10.0,
+          toleranciaMinutos: 10,
+          primeiraHora: 5.0,
           horaAdicional: 5.0,
           fracao15min: 2.0,
           valorDiaria: 50.0,
           limiteHorasDiaria: 8,
           modoCobranca: 'hora_fracao'
+        },
+        config: {
+          admin: {
+            login: 'admin',
+            senha: '123',
+            nome: 'Administrador SmartPark'
+          }
         },
         veiculos: [],
         sessoes: []
@@ -38,10 +45,17 @@ function lerBanco() {
       return dbInicial;
     }
     const data = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(data);
+    const db = JSON.parse(data);
+
+    if (!db.config) {
+      db.config = {
+        admin: { login: 'admin', senha: '123', nome: 'Administrador SmartPark' }
+      };
+    }
+    return db;
   } catch (err) {
     console.error('Erro ao ler banco de dados:', err);
-    return { tabelaPrecos: {}, veiculos: [], sessoes: [] };
+    return { tabelaPrecos: {}, config: {}, veiculos: [], sessoes: [] };
   }
 }
 
@@ -82,8 +96,8 @@ function calcularValorEstacionamento(entradaMs, saidaMs, tabela) {
     tempoFormatado = `${totalMinutos} min`;
   }
 
-  const tolerancia = Number(tabela.toleranciaMinutos) || 15;
-  const primeiraHora = Number(tabela.primeiraHora) || 10.0;
+  const tolerancia = Number(tabela.toleranciaMinutos) || 10;
+  const primeiraHora = Number(tabela.primeiraHora) || 5.0;
   const horaAdicional = Number(tabela.horaAdicional) || 5.0;
   const fracao15min = Number(tabela.fracao15min) || 2.0;
   const valorDiaria = Number(tabela.valorDiaria) || 50.0;
@@ -162,7 +176,6 @@ app.get('/api/eventos', (req, res) => {
   const newClient = { id: clientId, res };
   sseClients.push(newClient);
 
-  // Mensagem inicial de conexão
   res.write(`event: conectado\ndata: ${JSON.stringify({ status: 'ok', time: Date.now() })}\n\n`);
 
   req.on('close', () => {
@@ -171,13 +184,130 @@ app.get('/api/eventos', (req, res) => {
 });
 
 // ====================================================================
-// ROTAS DE STATUS E DASHBOARD
+// AUTENTICAÇÃO E CARGOS (ADMIN vs CLIENTE)
+// ====================================================================
+app.post('/api/auth/login', (req, res) => {
+  const db = lerBanco();
+  const { login, senha } = req.body;
+
+  if (!login || !senha) {
+    return res.status(400).json({ sucesso: false, mensagem: 'Informe o login e a senha.' });
+  }
+
+  const loginLimpo = login.trim().toLowerCase();
+  const senhaLimpa = senha.trim();
+
+  // 1. Verifica se é Administrador
+  const adminConfig = db.config?.admin || { login: 'admin', senha: '123', nome: 'Administrador SmartPark' };
+  if (loginLimpo === adminConfig.login.toLowerCase() && senhaLimpa === adminConfig.senha) {
+    return res.json({
+      sucesso: true,
+      token: 'token-admin-' + Date.now(),
+      usuario: {
+        role: 'admin',
+        nome: adminConfig.nome || 'Administrador',
+        login: adminConfig.login
+      }
+    });
+  }
+
+  // 2. Verifica se é um Cliente / Veículo cadastrado
+  const veiculo = db.veiculos.find(v => {
+    const vLogin = (v.login || v.placa || '').toLowerCase().trim();
+    const vPlaca = (v.placa || '').toLowerCase().trim();
+    const vCpf = (v.cpf || '').replace(/\D/g, '');
+    const vRfid = (v.rfid || '').toLowerCase().trim();
+    const inputCpfLimpo = login.replace(/\D/g, '');
+
+    const loginCorresponde = (vLogin === loginLimpo || vPlaca === loginLimpo || (inputCpfLimpo && vCpf === inputCpfLimpo) || vRfid === loginLimpo);
+    const senhaCorresponde = (v.senha || '123') === senhaLimpa;
+
+    return loginCorresponde && senhaCorresponde;
+  });
+
+  if (veiculo) {
+    return res.json({
+      sucesso: true,
+      token: 'token-cliente-' + veiculo.id + '-' + Date.now(),
+      usuario: {
+        role: 'cliente',
+        veiculo: {
+          id: veiculo.id,
+          rfid: veiculo.rfid,
+          nome: veiculo.nome,
+          placa: veiculo.placa,
+          contato: veiculo.contato,
+          cpf: veiculo.cpf,
+          login: veiculo.login || veiculo.placa
+        }
+      }
+    });
+  }
+
+  return res.status(401).json({
+    sucesso: false,
+    mensagem: 'Usuário ou senha incorretos. Verifique suas credenciais.'
+  });
+});
+
+// ====================================================================
+// PORTAL DO CLIENTE (DADOS ESPECÍFICOS DO SEU CARRO)
+// ====================================================================
+app.get('/api/cliente/meu-veiculo/:rfid', (req, res) => {
+  const db = lerBanco();
+  const rfidParam = (req.params.rfid || '').trim().toUpperCase();
+
+  const veiculo = db.veiculos.find(v => v.rfid.toUpperCase() === rfidParam);
+  if (!veiculo) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Veículo não encontrado.' });
+  }
+
+  const agora = Date.now();
+  const sessaoAtiva = db.sessoes.find(s => s.rfid.toUpperCase() === rfidParam && s.status === 'ESTACIONADO');
+
+  let dadosSessao = null;
+  if (sessaoAtiva) {
+    const calculo = calcularValorEstacionamento(sessaoAtiva.entrada, agora, db.tabelaPrecos);
+    dadosSessao = {
+      ...sessaoAtiva,
+      tempoDecorridoMs: agora - sessaoAtiva.entrada,
+      tempoFormatado: calculo.tempoFormatado,
+      tempoMinutos: calculo.tempoMinutos,
+      valorEstimado: calculo.valorTotal,
+      detalhesCalculo: calculo.detalhes
+    };
+  }
+
+  const historicoVeiculo = db.sessoes
+    .filter(s => s.rfid.toUpperCase() === rfidParam && s.status === 'PAGO')
+    .sort((a, b) => b.saida - a.saida)
+    .slice(0, 10);
+
+  res.json({
+    sucesso: true,
+    veiculo: {
+      id: veiculo.id,
+      rfid: veiculo.rfid,
+      nome: veiculo.nome,
+      placa: veiculo.placa,
+      contato: veiculo.contato,
+      cpf: veiculo.cpf,
+      login: veiculo.login || veiculo.placa
+    },
+    estacionado: !!sessaoAtiva,
+    sessaoAtiva: dadosSessao,
+    historico: historicoVeiculo,
+    tabelaPrecos: db.tabelaPrecos
+  });
+});
+
+// ====================================================================
+// ROTAS DE STATUS E DASHBOARD (EXCLUSIVO ADMIN)
 // ====================================================================
 app.get('/api/status', (req, res) => {
   const db = lerBanco();
   const ativas = db.sessoes.filter(s => s.status === 'ESTACIONADO');
   
-  // Total faturado hoje
   const hojeStr = new Date().toISOString().slice(0, 10);
   const faturamentoHoje = db.sessoes
     .filter(s => s.status === 'PAGO' && s.saida && new Date(s.saida).toISOString().slice(0, 10) === hojeStr)
@@ -206,7 +336,8 @@ app.get('/api/veiculos', (req, res) => {
       (v.nome && v.nome.toLowerCase().includes(q)) ||
       (v.placa && v.placa.toLowerCase().includes(q)) ||
       (v.cpf && v.cpf.toLowerCase().includes(q)) ||
-      (v.rfid && v.rfid.toLowerCase().includes(q))
+      (v.rfid && v.rfid.toLowerCase().includes(q)) ||
+      (v.login && v.login.toLowerCase().includes(q))
     );
   }
   res.json({ sucesso: true, veiculos: lista });
@@ -224,7 +355,7 @@ app.get('/api/veiculos/:rfid', (req, res) => {
 
 app.post('/api/veiculos', (req, res) => {
   const db = lerBanco();
-  let { rfid, nome, placa, contato, cpf } = req.body;
+  let { rfid, nome, placa, contato, cpf, login, senha } = req.body;
 
   if (!rfid || !nome || !placa || !contato || !cpf) {
     return res.status(400).json({ sucesso: false, mensagem: 'Todos os campos são obrigatórios (RFID, Nome, Placa, Contato, CPF).' });
@@ -235,6 +366,8 @@ app.post('/api/veiculos', (req, res) => {
   placa = placa.trim().toUpperCase();
   contato = contato.trim();
   cpf = cpf.trim();
+  login = (login || placa).trim().toUpperCase();
+  senha = (senha || '123').trim();
 
   // Verifica se o RFID já está cadastrado
   const existente = db.veiculos.find(v => v.rfid.toUpperCase() === rfid);
@@ -249,6 +382,8 @@ app.post('/api/veiculos', (req, res) => {
     placa,
     contato,
     cpf,
+    login,
+    senha,
     criadoEm: new Date().toISOString()
   };
 
@@ -269,11 +404,13 @@ app.put('/api/veiculos/:rfid', (req, res) => {
     return res.status(404).json({ sucesso: false, mensagem: 'Veículo não encontrado para alteração.' });
   }
 
-  const { nome, placa, contato, cpf } = req.body;
+  const { nome, placa, contato, cpf, login, senha } = req.body;
   if (nome) db.veiculos[index].nome = nome.trim();
   if (placa) db.veiculos[index].placa = placa.trim().toUpperCase();
   if (contato) db.veiculos[index].contato = contato.trim();
   if (cpf) db.veiculos[index].cpf = cpf.trim();
+  if (login) db.veiculos[index].login = login.trim().toUpperCase();
+  if (senha) db.veiculos[index].senha = senha.trim();
 
   salvarBanco(db);
   res.json({ sucesso: true, mensagem: 'Cadastro atualizado com sucesso!', veiculo: db.veiculos[index] });
@@ -283,7 +420,6 @@ app.delete('/api/veiculos/:rfid', (req, res) => {
   const db = lerBanco();
   const rfidParam = req.params.rfid.trim().toUpperCase();
   
-  // Não permite excluir se houver sessão ativa
   const sessaoAtiva = db.sessoes.find(s => s.status === 'ESTACIONADO' && s.rfid.toUpperCase() === rfidParam);
   if (sessaoAtiva) {
     return res.status(400).json({ sucesso: false, mensagem: 'Não é possível excluir o veículo pois ele está atualmente no estacionamento!' });
@@ -301,7 +437,7 @@ app.delete('/api/veiculos/:rfid', (req, res) => {
 });
 
 // ====================================================================
-// LEITURA DE RFID (PONTO CENTRAL DE ENTRADA / CONTROLE)
+// LEITURA DE RFID (ENTRADA DO VEÍCULO)
 // ====================================================================
 app.post('/api/leitura-rfid', (req, res) => {
   const db = lerBanco();
@@ -317,7 +453,6 @@ app.post('/api/leitura-rfid', (req, res) => {
   const veiculo = db.veiculos.find(v => v.rfid.toUpperCase() === rfid);
 
   if (!veiculo) {
-    // Notifica frontend para abrir modal de cadastro rápido com esse RFID já preenchido
     enviarEvento('rfid_nao_cadastrado', { rfid, timestamp: Date.now() });
 
     return res.json({
@@ -333,7 +468,6 @@ app.post('/api/leitura-rfid', (req, res) => {
   const sessaoAberta = db.sessoes.find(s => s.rfid.toUpperCase() === rfid && s.status === 'ESTACIONADO');
 
   if (sessaoAberta) {
-    // Já está estacionado: pode ser para pagamento ou alerta
     enviarEvento('rfid_ja_estacionado', { rfid, veiculo, sessao: sessaoAberta });
 
     return res.json({
@@ -346,7 +480,7 @@ app.post('/api/leitura-rfid', (req, res) => {
     });
   }
 
-  // 3. Não está estacionado: REGISTRA A ENTRADA E INICIA O TEMPORIZADOR!
+  // 3. REGISTRA A ENTRADA E INICIA O TEMPORIZADOR!
   const agora = Date.now();
   const novaSessao = {
     id: 'SES-' + agora,
@@ -368,7 +502,6 @@ app.post('/api/leitura-rfid', (req, res) => {
   db.sessoes.push(novaSessao);
   salvarBanco(db);
 
-  // Dispara evento para atualização instantânea de todas as telas (inicia cronômetro na interface)
   enviarEvento('entrada_registrada', { sessao: novaSessao, veiculo });
 
   res.json({
@@ -414,7 +547,6 @@ app.get('/api/sessoes/historico', (req, res) => {
   res.json({ sucesso: true, historico });
 });
 
-// Cancela uma sessão por engano/erro de operador
 app.post('/api/sessoes/:id/cancelar', (req, res) => {
   const db = lerBanco();
   const sessao = db.sessoes.find(s => s.id === req.params.id && s.status === 'ESTACIONADO');
@@ -434,8 +566,6 @@ app.post('/api/sessoes/:id/cancelar', (req, res) => {
 // ====================================================================
 // FUNCIONALIDADE DO SITE: PAGAMENTO
 // ====================================================================
-
-// 1. Simulação / Cálculo prévio do pagamento
 app.post('/api/pagamento/calcular', (req, res) => {
   const db = lerBanco();
   const { sessaoId, rfid, saidaCustomizada } = req.body;
@@ -462,7 +592,6 @@ app.post('/api/pagamento/calcular', (req, res) => {
   });
 });
 
-// 2. Finalizar temporizador e registrar o pagamento
 app.post('/api/pagamento/finalizar', (req, res) => {
   const db = lerBanco();
   const {
@@ -498,7 +627,6 @@ app.post('/api/pagamento/finalizar', (req, res) => {
     troco = Number(troco.toFixed(2));
   }
 
-  // Atualiza a sessão para PAGO
   sessao.status = 'PAGO';
   sessao.saida = saidaFinal;
   sessao.tempoMinutos = calculo.tempoMinutos;
@@ -512,8 +640,6 @@ app.post('/api/pagamento/finalizar', (req, res) => {
   sessao.troco = troco;
   sessao.historicoCalculo = calculo.detalhes;
   sessao.observacoes = observacoes;
-
-  salvarBanco(db);
 
   // Recibo / Comprovante
   const comprovante = {
@@ -535,7 +661,8 @@ app.post('/api/pagamento/finalizar', (req, res) => {
     emitidoEm: new Date().toLocaleString('pt-BR')
   };
 
-  // Notifica todos os navegadores abertos (atualiza pátio, estatísticas e libera cancela)
+  salvarBanco(db);
+
   enviarEvento('pagamento_concluido', { sessao, comprovante });
 
   res.json({
@@ -577,8 +704,7 @@ app.put('/api/tabela-precos', (req, res) => {
 // Inicialização do servidor
 app.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(` Sistema de Estacionamento Inteligente RFID (PEX)   `);
+  console.log(` SmartPark RFID - Sistema de Estacionamento (PEX)   `);
   console.log(` Servidor rodando em: http://localhost:${PORT}        `);
   console.log(`====================================================`);
 });
-

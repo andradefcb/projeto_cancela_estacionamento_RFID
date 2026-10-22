@@ -1,17 +1,59 @@
 {
-  "tabelaPrecos": {
-    "toleranciaMinutos": 10,
-    "primeiraHora": 5,
-    "horaAdicional": 5,
-    "fracao15min": 2,
-    "valorDiaria": 50,
-    "limiteHorasDiaria": 8,
-    "modoCobranca": "hora_fracao"
-  },
+  "tabelaPrecos": {},
+  "config": {},
   "veiculos": [
-      
+    {
+      "id": "VEI-1792702378899",
+      "rfid": "123456789",
+      "nome": "Thiago Andrade",
+      "placa": "PHE1493",
+      "contato": "(92) 98405-7576",
+      "cpf": "704.127.412-88",
+      "login": "PHE1493",
+      "senha": "123",
+      "criadoEm": "2026-10-22T20:52:58.899Z"
+    }
   ],
   "sessoes": [
-    
+    {
+      "id": "SES-1792702415225",
+      "rfid": "123456789",
+      "veiculo": {
+        "nome": "Thiago Andrade",
+        "placa": "PHE1493",
+        "contato": "(92) 98405-7576",
+        "cpf": "704.127.412-88"
+      },
+      "entrada": 1792702415225,
+      "saida": 1792702431142,
+      "status": "PAGO",
+      "valorCobrado": 0,
+      "formaPagamento": "cartao_credito",
+      "historicoCalculo": "Tempo dentro do período de tolerância gratuita (10 min). Valor isento.",
+      "tempoMinutos": 1,
+      "tempoFormatado": "1 min",
+      "valorBase": 0,
+      "desconto": 0,
+      "acrescimo": 0,
+      "valorRecebido": 0,
+      "troco": 0,
+      "observacoes": ""
+    },
+    {
+      "id": "SES-1792702471493",
+      "rfid": "123456789",
+      "veiculo": {
+        "nome": "Thiago Andrade",
+        "placa": "PHE1493",
+        "contato": "(92) 98405-7576",
+        "cpf": "704.127.412-88"
+      },
+      "entrada": 1792702471493,
+      "saida": 1792702516923,
+      "status": "CANCELADO",
+      "valorCobrado": null,
+      "formaPagamento": null,
+      "historicoCalculo": null
+    }
   ]
 }
