@@ -3,9 +3,12 @@
  * Projeto PEX 2° Período
  *
  * Suporte a:
- * - Sistema de Cargos (Admin vs Cliente/Veículo) e Login
+ * - Login unificado com detecção automática de cargo (Admin vs Cliente/Veículo)
+ * - Tela exclusiva de Gestão de Cargos (Admin)
  * - Cronômetros ao vivo em tempo real (Pátio e Portal do Cliente)
- * - Tela de Pagamento por Tabela (Guarita e Online pelo Cliente)
+ * - Cobrança estritamente via PIX (QR Code e Copia-e-Cola dinâmico)
+ * - Liberação de ticket e cancela apenas após o pagamento
+ * - Tabela de preços com 5 opções (Isenção, 30 min, 1h, hora adicional, diária)
  * - Integração com Arduino via Web Serial API
  */
 
@@ -15,19 +18,20 @@ const Estado = {
   veiculos: [],
   sessoesAtivas: [],
   historico: [],
+  usuariosCargos: [],
   tabelaPrecos: {
-    toleranciaMinutos: 10,
-    primeiraHora: 5.0,
-    horaAdicional: 5.0,
-    fracao15min: 2.0,
-    valorDiaria: 50.0,
-    limiteHorasDiaria: 8,
-    modoCobranca: 'hora_fracao'
+    isencaoMinutos: 15,
+    valor30min: 5.0,
+    valor1Hora: 10.0,
+    valorHoraAdicional: 5.0,
+    valorDiaria: 40.0,
+    limiteHorasDiaria: 8
   },
   ultimoRfidLido: '',
   sessaoSelecionadaId: null,
+  pixAdminAtual: null,
+  pixClienteAtual: null,
   metodoPagamento: 'pix',
-  metodoPagamentoCliente: 'pix',
   dadosClientePortal: null,
   intervaloCronometro: null
 };
@@ -38,71 +42,31 @@ const Estado = {
 document.addEventListener('DOMContentLoaded', () => {
   configurarAutenticacao();
   configurarNavegacaoAbas();
+  configurarGestaoCargos();
   configurarEventosForms();
   configurarEventosPagamento();
   configurarEventosPortalCliente();
+  configurarEventosExportacao();
   configurarSimulador();
   configurarSSE();
   configurarOuvinteSerialRFID();
 
-  // Verifica se já existe sessão salva
-  verificarSessaoSalva();
+  // Define SEMPRE a tela de login como tela padrão ao inicializar
+  exibirTelaLoginPadrao();
 
   // Inicia loop de atualização de cronômetros em tempo real
   iniciarLoopCronometro();
 });
 
 // ====================================================================
-// AUTENTICAÇÃO E CONTROLE DE CARGOS (ADMIN vs CLIENTE)
+// AUTENTICAÇÃO UNIFICADA (LOGIN ÚNICO)
 // ====================================================================
 function configurarAutenticacao() {
   const formLogin = document.getElementById('form-login');
-  const btnRoleCliente = document.getElementById('btn-role-cliente');
-  const btnRoleAdmin = document.getElementById('btn-role-admin');
-  const lblLogin = document.getElementById('lbl-login-input');
-  const helpLogin = document.getElementById('help-login-input');
   const inputLogin = document.getElementById('input-login');
   const inputSenha = document.getElementById('input-senha');
 
-  btnRoleCliente?.addEventListener('click', () => {
-    btnRoleCliente.classList.add('active');
-    btnRoleAdmin.classList.remove('active');
-    lblLogin.innerText = 'Placa do Veículo, CPF ou Login:';
-    helpLogin.innerText = 'Digite a placa do seu carro ou CPF cadastrado.';
-    inputLogin.placeholder = 'Ex: BRA2E19 ou seu CPF';
-    inputLogin.value = '';
-    inputSenha.value = '';
-    inputLogin.focus();
-  });
-
-  btnRoleAdmin?.addEventListener('click', () => {
-    btnRoleAdmin.classList.add('active');
-    btnRoleCliente.classList.remove('active');
-    lblLogin.innerText = 'Login de Administrador:';
-    helpLogin.innerText = 'Digite as credenciais da guarita/administração.';
-    inputLogin.placeholder = 'Ex: admin';
-    inputLogin.value = 'admin';
-    inputSenha.value = '123';
-    inputSenha.focus();
-  });
-
-  // Botões de Demonstração Rápida
-  document.getElementById('btn-demo-admin')?.addEventListener('click', () => {
-    btnRoleAdmin.click();
-    inputLogin.value = 'admin';
-    inputSenha.value = '123';
-    formLogin.requestSubmit();
-  });
-
-  document.getElementById('btn-demo-cliente')?.addEventListener('click', () => {
-    btnRoleCliente.click();
-    const primeiro = Estado.veiculos[0];
-    inputLogin.value = primeiro ? (primeiro.login || primeiro.placa) : 'PHE1493';
-    inputSenha.value = primeiro ? (primeiro.senha || '123') : '123';
-    formLogin.requestSubmit();
-  });
-
-  // Submissão do Formulário de Login
+  // Submissão do Formulário de Login Único
   formLogin?.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -134,14 +98,18 @@ function configurarAutenticacao() {
         return;
       }
 
-      // Login bem-sucedido
+      // Login bem-sucedido: o backend já retorna o role ('admin' ou 'cliente')
       Estado.usuario = dados.usuario;
-      localStorage.setItem('smartpark_user', JSON.stringify(dados.usuario));
       mostrarToast(`Bem-vindo, ${dados.usuario.nome || 'Usuário'}!`, 'success');
 
       aplicarVisualPorCargo(dados.usuario);
     } catch (err) {
       console.error('Erro no login:', err);
+      const btnSubmit = document.getElementById('btn-submit-login');
+      if (btnSubmit) {
+        btnSubmit.disabled = false;
+        btnSubmit.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Acessar Sistema';
+      }
       mostrarToast('Erro ao conectar ao servidor.', 'danger');
     }
   });
@@ -154,21 +122,23 @@ function configurarAutenticacao() {
   });
 }
 
-function verificarSessaoSalva() {
-  const salvo = localStorage.getItem('smartpark_user');
-  if (salvo) {
-    try {
-      Estado.usuario = JSON.parse(salvo);
-      aplicarVisualPorCargo(Estado.usuario);
-      return;
-    } catch (e) {
-      localStorage.removeItem('smartpark_user');
-    }
-  }
+function exibirTelaLoginPadrao() {
+  // Limpa qualquer vestígio de sessão anterior
+  localStorage.removeItem('smartpark_user');
+  sessionStorage.removeItem('smartpark_user');
+  Estado.usuario = null;
 
-  // Se não estiver logado, exibe tela de login
-  document.getElementById('tela-login').style.display = 'flex';
-  document.getElementById('tela-principal-app').style.display = 'none';
+  // Garante que a tela de login esteja sempre visível e o app oculto
+  const telaLogin = document.getElementById('tela-login');
+  const telaPrincipal = document.getElementById('tela-principal-app');
+  if (telaLogin) telaLogin.style.display = 'flex';
+  if (telaPrincipal) telaPrincipal.style.display = 'none';
+
+  // Limpa campos de credenciais
+  const inputLogin = document.getElementById('input-login');
+  const inputSenha = document.getElementById('input-senha');
+  if (inputLogin) inputLogin.value = '';
+  if (inputSenha) inputSenha.value = '';
 }
 
 function aplicarVisualPorCargo(usuario) {
@@ -181,7 +151,7 @@ function aplicarVisualPorCargo(usuario) {
   const navSubtitle = document.getElementById('nav-subtitle');
 
   if (usuario.role === 'admin') {
-    // VISÃO DE ADMINISTRADOR
+    // VISÃO DE ADMINISTRADOR (Acesso total às abas de guarita, cargos, preços, etc)
     avatarEl.innerHTML = '<i class="fa-solid fa-user-shield"></i>';
     nameEl.innerText = usuario.nome || 'Administrador';
     roleEl.innerText = 'ADMINISTRADOR';
@@ -196,12 +166,13 @@ function aplicarVisualPorCargo(usuario) {
     carregarVeiculos();
     carregarSessoesAtivas();
     carregarHistorico();
+    carregarGestaoCargos();
     mudarAba('tab-patio');
   } else {
-    // VISÃO DE CLIENTE / PROPRIETÁRIO DO VEÍCULO
+    // VISÃO DE CLIENTE / PROPRIETÁRIO DO VEÍCULO (Acesso exclusivo ao seu veículo)
     avatarEl.innerHTML = '<i class="fa-solid fa-car"></i>';
-    nameEl.innerText = usuario.veiculo.nome || 'Cliente';
-    roleEl.innerText = `VEÍCULO ${usuario.veiculo.placa}`;
+    nameEl.innerText = (usuario.veiculo && usuario.veiculo.nome) || usuario.nome || 'Cliente';
+    roleEl.innerText = usuario.veiculo ? `VEÍCULO ${usuario.veiculo.placa}` : 'CLIENTE';
     navSubtitle.innerText = 'Portal do Motorista';
 
     document.getElementById('admin-nav-tabs').style.display = 'none';
@@ -209,43 +180,137 @@ function aplicarVisualPorCargo(usuario) {
     document.getElementById('portal-cliente').style.display = 'block';
 
     carregarTabelaPrecos();
-    carregarDadosPortalCliente(usuario.veiculo.rfid);
+    if (usuario.veiculo && usuario.veiculo.rfid) {
+      carregarDadosPortalCliente(usuario.veiculo.rfid);
+    }
   }
 }
 
 function fazerLogout() {
-  localStorage.removeItem('smartpark_user');
-  Estado.usuario = null;
-  document.getElementById('tela-principal-app').style.display = 'none';
-  document.getElementById('tela-login').style.display = 'flex';
-  document.getElementById('input-login').value = '';
-  document.getElementById('input-senha').value = '';
+  exibirTelaLoginPadrao();
   mostrarToast('Você saiu do sistema.', 'info');
 }
 
 // ====================================================================
-// PORTAL DO CLIENTE (ACOMPANHAMENTO DO TEMPO E PAGAMENTO DO SEU CARRO)
+// GESTÃO DE CARGOS (EXCLUSIVA ADMINISTRADORES)
+// ====================================================================
+function configurarGestaoCargos() {
+  document.getElementById('btn-atualizar-cargos')?.addEventListener('click', carregarGestaoCargos);
+}
+
+async function carregarGestaoCargos() {
+  try {
+    const res = await fetch('/api/cargos/usuarios');
+    const dados = await res.json();
+    if (dados.sucesso) {
+      Estado.usuariosCargos = dados.usuarios;
+      renderizarTabelaCargos(dados.usuarios);
+    }
+  } catch (err) {
+    console.warn('Erro ao carregar lista de cargos:', err);
+  }
+}
+
+function renderizarTabelaCargos(usuarios) {
+  const tbody = document.getElementById('tabela-cargos-body');
+  if (!tbody) return;
+
+  if (usuarios.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Nenhum usuário cadastrado.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = usuarios.map((u, idx) => {
+    const isAdmin = u.cargo === 'admin';
+    const isMaster = Boolean(u.isMaster || u.id === 'ADMIN-MASTER' || u.tipo === 'admin_master');
+    const safeId = (u.id || 'usr_' + idx).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    let badgeCargo = isAdmin
+      ? `<span class="badge" style="background: #dbeafe; color: #1e40af; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 6px;"><i class="fa-solid fa-user-shield"></i> Administrador</span>`
+      : `<span class="badge" style="background: #dcfce7; color: #15803d; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 6px;"><i class="fa-solid fa-car"></i> Cliente</span>`;
+
+    const selectId = `cargo-sel-${safeId}`;
+    const btnId = `btn-salvar-cargo-${safeId}`;
+
+    const seletorHtml = `
+      <select id="${selectId}" class="form-control form-control-sm" style="font-weight: 600; max-width: 170px;" onchange="alterarCargoUsuario('${u.id}', this.value, '${btnId}')">
+        <option value="cliente" ${u.cargo === 'cliente' ? 'selected' : ''}>Cliente</option>
+        <option value="admin" ${u.cargo === 'admin' ? 'selected' : ''}>Administrador</option>
+      </select>
+    `;
+
+    const acaoHtml = `
+      <button type="button" id="${btnId}" class="btn btn-primary btn-sm" onclick="salvarCargoLinha('${u.id}', '${selectId}', '${btnId}')">
+        <i class="fa-solid fa-floppy-disk"></i> Salvar
+      </button>
+    `;
+
+    return `
+      <tr>
+        <td>
+          <strong>${u.nome}</strong>
+          ${isMaster ? '<span class="badge" style="background: #eff6ff; color: #2563eb; font-size: 0.72rem; margin-left: 6px; font-weight: 700;"><i class="fa-solid fa-crown"></i> Master</span>' : ''}
+        </td>
+        <td><code>${u.login || u.placa || '-'}</code></td>
+        <td>${badgeCargo}</td>
+        <td>${seletorHtml}</td>
+        <td style="text-align: right;">${acaoHtml}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function salvarCargoLinha(id, selectId, btnId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  await alterarCargoUsuario(id, sel.value, btnId);
+}
+
+async function alterarCargoUsuario(id, novoCargo, btnId = null) {
+  const btn = btnId ? document.getElementById(btnId) : null;
+  const textoOriginal = btn ? btn.innerHTML : null;
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    const res = await fetch(`/api/cargos/usuarios/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cargo: novoCargo })
+    });
+    const dados = await res.json();
+
+    if (dados.sucesso) {
+      mostrarToast(`✅ ${dados.mensagem || 'Cargo atualizado com sucesso!'}`, 'success');
+      carregarGestaoCargos();
+      carregarVeiculos();
+    } else {
+      mostrarToast(dados.mensagem || 'Erro ao alterar cargo.', 'danger');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = textoOriginal;
+      }
+      carregarGestaoCargos();
+    }
+  } catch (err) {
+    console.error('Erro ao alterar cargo:', err);
+    mostrarToast('Erro ao comunicar com o servidor.', 'danger');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = textoOriginal;
+    }
+    carregarGestaoCargos();
+  }
+}
+
+// ====================================================================
+// PORTAL DO CLIENTE (ACOMPANHAMENTO DO TEMPO E PAGAMENTO PIX)
 // ====================================================================
 function configurarEventosPortalCliente() {
-  const cliMethodPix = document.getElementById('cli-method-pix');
-  const cliMethodCartao = document.getElementById('cli-method-cartao');
-  const cliAreaPix = document.getElementById('cli-area-pix');
-
-  cliMethodPix?.addEventListener('click', () => {
-    cliMethodPix.classList.add('selected');
-    cliMethodCartao.classList.remove('selected');
-    Estado.metodoPagamentoCliente = 'pix';
-    if (cliAreaPix) cliAreaPix.style.display = 'block';
-  });
-
-  cliMethodCartao?.addEventListener('click', () => {
-    cliMethodCartao.classList.add('selected');
-    cliMethodPix.classList.remove('selected');
-    Estado.metodoPagamentoCliente = 'cartao_credito';
-    if (cliAreaPix) cliAreaPix.style.display = 'none';
-  });
-
-  // Botão Pagar pelo Portal do Cliente
+  // Botão Pagar via PIX pelo Portal do Cliente
   document.getElementById('btn-cli-confirmar-pagamento')?.addEventListener('click', async () => {
     await finalizarPagamentoCliente();
   });
@@ -291,6 +356,9 @@ async function carregarDadosPortalCliente(rfid) {
 
       document.getElementById('cli-hora-entrada').innerText = new Date(dados.sessaoAtiva.entrada).toLocaleTimeString('pt-BR');
       atualizarValoresTempoCliente(dados.sessaoAtiva.entrada);
+
+      // Gera e renderiza o PIX dinâmico para o cliente
+      solicitarPixDinamico(dados.sessaoAtiva.id, 'cliente');
     } else {
       // CARRO FORA DO PÁTIO
       statusBadge.className = 'client-status-badge outside';
@@ -330,11 +398,11 @@ async function finalizarPagamentoCliente() {
 
   try {
     btnPagar.disabled = true;
-    btnPagar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando Pagamento...';
+    btnPagar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Confirmando Pagamento PIX...';
 
     const payload = {
       sessaoId: sessao.id,
-      formaPagamento: Estado.metodoPagamentoCliente,
+      formaPagamento: 'pix',
       valorRecebido: null,
       desconto: 0,
       acrescimo: 0,
@@ -349,7 +417,7 @@ async function finalizarPagamentoCliente() {
 
     const resposta = await res.json();
     btnPagar.disabled = false;
-    btnPagar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Pagar Agora e Liberar Cancela';
+    btnPagar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Pagar via PIX e Liberar Ticket';
 
     if (!resposta.sucesso) {
       mostrarToast(resposta.mensagem, 'danger');
@@ -359,8 +427,9 @@ async function finalizarPagamentoCliente() {
     // Abre a cancela de saída no Arduino!
     arduinoSerial.enviarComando('OPEN');
 
-    mostrarToast('✅ Pagamento concluído com sucesso! Cancela liberada.', 'success');
+    mostrarToast('✅ Pagamento PIX confirmado com sucesso! Ticket liberado e cancela aberta.', 'success');
 
+    // Abre modal com o comprovante/ticket liberado
     abrirModalRecibo(resposta.comprovante);
 
     // Recarrega o portal do cliente
@@ -368,7 +437,7 @@ async function finalizarPagamentoCliente() {
   } catch (err) {
     console.error('Erro ao pagar pelo portal:', err);
     btnPagar.disabled = false;
-    btnPagar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Pagar Agora e Liberar Cancela';
+    btnPagar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Pagar via PIX e Liberar Ticket';
     mostrarToast('Erro ao processar pagamento.', 'danger');
   }
 }
@@ -389,20 +458,62 @@ function renderizarHistoricoCliente(historico) {
       <td>${s.saida ? new Date(s.saida).toLocaleString('pt-BR') : '-'}</td>
       <td>${s.tempoFormatado || '-'}</td>
       <td style="font-weight: 700; color: var(--success);">${formatarMoeda(s.valorCobrado || 0)}</td>
-      <td><span class="badge" style="background: #f1f5f9; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">${s.formaPagamento || '-'}</span></td>
+      <td><span class="badge" style="background: #f1f5f9; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">${s.formaPagamento || 'PIX'}</span></td>
       <td style="text-align: right;">
         <button class="btn btn-outline btn-sm" onclick="reimprimirRecibo('${s.id}')">
-          <i class="fa-solid fa-receipt"></i> Recibo
+          <i class="fa-solid fa-receipt"></i> Ticket / Recibo
         </button>
       </td>
     </tr>
   `).join('');
 }
 
+// ====================================================================
+// SERVIÇO PIX: GERAÇÃO E CÓPIA
+// ====================================================================
+async function solicitarPixDinamico(sessaoId, tipo = 'admin') {
+  try {
+    const res = await fetch('/api/pagamento/pix/gerar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessaoId })
+    });
+    const dados = await res.json();
+
+    if (!dados.sucesso) return;
+
+    const pixData = dados.pix || dados.cobrancaPix;
+    if (!pixData) return;
+
+    if (tipo === 'admin') {
+      Estado.pixAdminAtual = pixData.copiaECola;
+      const containerSvg = document.getElementById('admin-qrcode-container');
+      if (containerSvg && pixData.qrCodeSvg) {
+        containerSvg.innerHTML = pixData.qrCodeSvg;
+      }
+      const txtChave = document.getElementById('admin-chave-pix-texto');
+      if (txtChave) txtChave.innerText = pixData.chavePix || pixData.chave || 'pex-estacionamento-2026@arduino.org';
+    } else {
+      Estado.pixClienteAtual = pixData.copiaECola;
+      const containerSvg = document.getElementById('cli-qrcode-container');
+      if (containerSvg && pixData.qrCodeSvg) {
+        containerSvg.innerHTML = pixData.qrCodeSvg;
+      }
+      const txtChave = document.getElementById('cli-chave-pix-texto');
+      if (txtChave) txtChave.innerText = pixData.chavePix || pixData.chave || 'pex-estacionamento-2026@arduino.org';
+    }
+  } catch (err) {
+    console.warn('Erro ao solicitar PIX dinâmico:', err);
+  }
+}
+
 function copiarChavePix() {
-  const chave = 'pex-estacionamento-2026@arduino.org';
-  navigator.clipboard.writeText(chave);
-  mostrarToast('Chave Pix copiada para a área de transferência!', 'success');
+  const chave = Estado.pixAdminAtual || Estado.pixClienteAtual || 'pex-estacionamento-2026@arduino.org';
+  navigator.clipboard.writeText(chave).then(() => {
+    mostrarToast('Código Pix Copia-e-Cola copiado para a área de transferência!', 'success');
+  }).catch(() => {
+    mostrarToast('Chave PIX: ' + chave, 'info');
+  });
 }
 
 // ====================================================================
@@ -419,7 +530,7 @@ function configurarSSE() {
       if (Estado.usuario && Estado.usuario.role === 'admin') {
         carregarSessoesAtivas();
         carregarStatusDashboard();
-      } else if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.usuario.veiculo.rfid === dados.veiculo.rfid) {
+      } else if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.usuario.veiculo && Estado.usuario.veiculo.rfid === dados.veiculo.rfid) {
         carregarDadosPortalCliente(dados.veiculo.rfid);
       }
     });
@@ -431,7 +542,7 @@ function configurarSSE() {
         carregarSessoesAtivas();
         carregarHistorico();
         carregarStatusDashboard();
-      } else if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.usuario.veiculo.rfid === dados.sessao.rfid) {
+      } else if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.usuario.veiculo && Estado.usuario.veiculo.rfid === dados.sessao.rfid) {
         carregarDadosPortalCliente(dados.sessao.rfid);
       }
     });
@@ -439,7 +550,15 @@ function configurarSSE() {
     evtSource.addEventListener('veiculo_cadastrado', () => {
       if (Estado.usuario && Estado.usuario.role === 'admin') {
         carregarVeiculos();
+        carregarGestaoCargos();
         carregarStatusDashboard();
+      }
+    });
+
+    evtSource.addEventListener('cargos_atualizados', () => {
+      if (Estado.usuario && Estado.usuario.role === 'admin') {
+        carregarGestaoCargos();
+        carregarVeiculos();
       }
     });
 
@@ -475,6 +594,8 @@ function configurarNavegacaoAbas() {
       if (targetId === 'tab-patio') carregarSessoesAtivas();
       if (targetId === 'tab-pagamento') atualizarSelectSessaoPagamento();
       if (targetId === 'tab-veiculos') carregarVeiculos();
+      if (targetId === 'tab-cargos') carregarGestaoCargos();
+      if (targetId === 'tab-tabela') carregarTabelaPrecos();
       if (targetId === 'tab-historico') carregarHistorico();
     });
   });
@@ -606,18 +727,26 @@ function atualizarCamposTabelaPrecos() {
   const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
   const setText = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
 
-  setVal('tab-tolerancia', t.toleranciaMinutos);
-  setVal('tab-primeira-hora', Number(t.primeiraHora).toFixed(2));
-  setVal('tab-modo-cobranca', t.modoCobranca || 'hora_fracao');
-  setVal('tab-fracao-15min', Number(t.fracao15min).toFixed(2));
-  setVal('tab-hora-adicional', Number(t.horaAdicional).toFixed(2));
-  setVal('tab-valor-diaria', Number(t.valorDiaria).toFixed(2));
-  setVal('tab-limite-diaria', t.limiteHorasDiaria);
+  const isencao = t.isencaoMinutos ?? 15;
+  const v30 = Number(t.valor30min ?? 5).toFixed(2);
+  const v1h = Number(t.valor1Hora ?? 10).toFixed(2);
+  const vAdic = Number(t.valorHoraAdicional ?? 5).toFixed(2);
+  const vDiaria = Number(t.valorDiaria ?? 40).toFixed(2);
+  const limDiaria = t.limiteHorasDiaria ?? 8;
 
-  setText('prev-tolerancia', t.toleranciaMinutos);
-  setText('prev-primeira-hora', Number(t.primeiraHora).toFixed(2));
-  setText('prev-limite-diaria', t.limiteHorasDiaria);
-  setText('prev-diaria', Number(t.valorDiaria).toFixed(2));
+  setVal('tab-isencao', isencao);
+  setVal('tab-30min', v30);
+  setVal('tab-1hora', v1h);
+  setVal('tab-hora-adicional', vAdic);
+  setVal('tab-valor-diaria', vDiaria);
+  setVal('tab-limite-diaria', limDiaria);
+
+  setText('prev-isencao', isencao);
+  setText('prev-30min', v30);
+  setText('prev-1hora', v1h);
+  setText('prev-hora-adic', vAdic);
+  setText('prev-limite-diaria', limDiaria);
+  setText('prev-diaria', vDiaria);
 }
 
 async function carregarVeiculos() {
@@ -708,14 +837,14 @@ function renderizarPatio(sessoes) {
               <div class="timer-value card-cronometro">${tempoHms}</div>
             </div>
             <div>
-              <div class="timer-label">Valor Parcial</div>
+              <div class="timer-label">Valor PIX Parcial</div>
               <div class="timer-cost card-valor">${formatarMoeda(calc.valorTotal)}</div>
             </div>
           </div>
 
           <div class="card-footer-actions">
             <button class="btn btn-success btn-sm" style="flex: 1;" onclick="irParaPagamentoComSessao('${s.id}')">
-              <i class="fa-solid fa-cash-register"></i> Finalizar & Pagar
+              <i class="fa-solid fa-cash-register"></i> Cobrança PIX
             </button>
             <button class="btn btn-outline btn-sm" style="color: var(--danger);" title="Cancelar entrada" onclick="cancelarSessao('${s.id}')">
               <i class="fa-solid fa-xmark"></i>
@@ -769,54 +898,23 @@ function iniciarLoopCronometro() {
 
         if (valorPag) valorPag.innerText = formatarMoeda(final);
         if (detalhesPag) detalhesPag.innerText = calc.detalhes;
-
-        atualizarCalculoTroco(final);
       }
     }
 
     // 3. Atualiza o Portal do Cliente (se o cliente estiver logado e seu carro estiver no pátio)
-    if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.dadosClientePortal && Estado.dadosClientePortal.estacionado) {
+    if (Estado.usuario && Estado.usuario.role === 'cliente' && Estado.dadosClientePortal && Estado.dadosClientePortal.estacionado && Estado.dadosClientePortal.sessaoAtiva) {
       atualizarValoresTempoCliente(Estado.dadosClientePortal.sessaoAtiva.entrada);
     }
   }, 1000);
 }
 
 // ====================================================================
-// TELA DE PAGAMENTO (GUARITA / ADMIN)
+// TELA DE PAGAMENTO (GUARITA / ADMIN - EXCLUSIVO PIX)
 // ====================================================================
 function configurarEventosPagamento() {
   const selectSessao = document.getElementById('select-sessao-pagamento');
   selectSessao?.addEventListener('change', (e) => {
     selecionarSessaoParaPagamento(e.target.value);
-  });
-
-  const methodOptions = document.querySelectorAll('.method-option[data-method]');
-  methodOptions.forEach(opt => {
-    opt.addEventListener('click', () => {
-      methodOptions.forEach(o => o.classList.remove('selected'));
-      opt.classList.add('selected');
-      Estado.metodoPagamento = opt.getAttribute('data-method');
-
-      const blocoPix = document.getElementById('bloco-pix');
-      const blocoDinheiro = document.getElementById('bloco-dinheiro');
-
-      if (Estado.metodoPagamento === 'pix') {
-        blocoPix.style.display = 'block';
-        blocoDinheiro.style.display = 'none';
-      } else if (Estado.metodoPagamento === 'dinheiro') {
-        blocoPix.style.display = 'none';
-        blocoDinheiro.style.display = 'block';
-      } else {
-        blocoPix.style.display = 'none';
-        blocoDinheiro.style.display = 'none';
-      }
-    });
-  });
-
-  const inputDinheiro = document.getElementById('input-dinheiro-recebido');
-  inputDinheiro?.addEventListener('input', () => {
-    const valorAtual = obterValorTotalAtual();
-    atualizarCalculoTroco(valorAtual);
   });
 
   document.getElementById('input-desconto')?.addEventListener('input', recalcularTelaPagamento);
@@ -885,6 +983,9 @@ function selecionarSessaoParaPagamento(sessaoId) {
 
   recalcularTelaPagamento();
 
+  // Solicita QR Code PIX dinâmico
+  solicitarPixDinamico(sessao.id, 'admin');
+
   if (boxDetalhes) boxDetalhes.style.display = 'block';
   if (boxPlaceholder) boxPlaceholder.style.display = 'none';
   if (btnFinalizar) btnFinalizar.disabled = false;
@@ -897,7 +998,6 @@ function recalcularTelaPagamento() {
 
   const agora = Date.now();
   const calc = calcularValorTempoReal(sessao.entrada, agora);
-
   const desconto = Number(document.getElementById('input-desconto')?.value || 0);
   const acrescimo = Number(document.getElementById('input-acrescimo')?.value || 0);
   let final = calc.valorTotal - desconto + acrescimo;
@@ -906,25 +1006,6 @@ function recalcularTelaPagamento() {
   document.getElementById('pag-cronometro-final').innerText = formatarTempoHMS(agora - sessao.entrada);
   document.getElementById('pag-memoria-calculo').innerText = calc.detalhes;
   document.getElementById('pag-valor-total').innerText = formatarMoeda(final);
-
-  atualizarCalculoTroco(final);
-}
-
-function obterValorTotalAtual() {
-  const el = document.getElementById('pag-valor-total');
-  if (!el) return 0;
-  const text = el.innerText.replace('R$', '').replace(/\./g, '').replace(',', '.').trim();
-  return parseFloat(text) || 0;
-}
-
-function atualizarCalculoTroco(valorTotal) {
-  const inputDinheiro = document.getElementById('input-dinheiro-recebido');
-  const lblTroco = document.getElementById('lbl-troco-calculado');
-  if (!inputDinheiro || !lblTroco) return;
-
-  const valorRecebido = parseFloat(inputDinheiro.value) || 0;
-  const troco = Math.max(0, valorRecebido - valorTotal);
-  lblTroco.innerText = formatarMoeda(troco);
 }
 
 async function finalizarPagamentoGuarita() {
@@ -936,19 +1017,18 @@ async function finalizarPagamentoGuarita() {
   const sessao = Estado.sessoesAtivas.find(s => s.id === Estado.sessaoSelecionadaId);
   if (!sessao) return;
 
-  const valorRecebido = parseFloat(document.getElementById('input-dinheiro-recebido')?.value) || null;
   const desconto = parseFloat(document.getElementById('input-desconto')?.value) || 0;
   const acrescimo = parseFloat(document.getElementById('input-acrescimo')?.value) || 0;
 
   try {
     const btnFinalizar = document.getElementById('btn-finalizar-pagamento');
     btnFinalizar.disabled = true;
-    btnFinalizar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando...';
+    btnFinalizar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Confirmando PIX...';
 
     const payload = {
       sessaoId: sessao.id,
-      formaPagamento: Estado.metodoPagamento,
-      valorRecebido,
+      formaPagamento: 'pix',
+      valorRecebido: null,
       desconto,
       acrescimo,
       saidaTimestamp: Date.now()
@@ -965,20 +1045,20 @@ async function finalizarPagamentoGuarita() {
     if (!resposta.sucesso) {
       mostrarToast(resposta.mensagem, 'danger');
       btnFinalizar.disabled = false;
-      btnFinalizar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Finalizar Temporizador & Pagar';
+      btnFinalizar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Confirmar Recebimento PIX e Liberar Ticket';
       return;
     }
 
     // Abre cancela de saída no Arduino
     arduinoSerial.enviarComando('OPEN');
 
-    mostrarToast('✅ Pagamento registrado com sucesso! Cancela liberada.', 'success');
+    mostrarToast('✅ Pagamento PIX confirmado com sucesso! Ticket liberado e cancela aberta.', 'success');
 
+    // Abre modal com o comprovante liberado
     abrirModalRecibo(resposta.comprovante);
 
     Estado.sessaoSelecionadaId = null;
     selecionarSessaoParaPagamento(null);
-    document.getElementById('input-dinheiro-recebido').value = '';
     document.getElementById('input-desconto').value = '0.00';
     document.getElementById('input-acrescimo').value = '0.00';
 
@@ -987,7 +1067,7 @@ async function finalizarPagamentoGuarita() {
     carregarStatusDashboard();
 
     btnFinalizar.disabled = true;
-    btnFinalizar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Finalizar Temporizador & Pagar';
+    btnFinalizar.innerHTML = '<i class="fa-solid fa-circle-check"></i> Confirmar Recebimento PIX e Liberar Ticket';
   } catch (err) {
     console.error('Erro ao finalizar pagamento:', err);
     mostrarToast('Erro ao processar pagamento.', 'danger');
@@ -995,7 +1075,7 @@ async function finalizarPagamentoGuarita() {
 }
 
 // ====================================================================
-// MODAL: RECIBO / COMPROVANTE
+// MODAL: RECIBO / COMPROVANTE (DESBLOQUEADO APENAS APÓS PAGAMENTO)
 // ====================================================================
 function abrirModalRecibo(comprovante) {
   document.getElementById('recibo-cupom-id').innerText = comprovante.numeroCupom;
@@ -1009,21 +1089,16 @@ function abrirModalRecibo(comprovante) {
   document.getElementById('recibo-duracao').innerText = comprovante.duracaoFormatada;
   document.getElementById('recibo-detalhes').innerText = comprovante.detalhesCalculo;
   document.getElementById('recibo-valor').innerText = formatarMoeda(comprovante.valorTotal);
-  document.getElementById('recibo-forma').innerText = comprovante.formaPagamento;
+  document.getElementById('recibo-forma').innerText = comprovante.formaPagamento || 'PIX';
 
   const linhaTroco = document.getElementById('recibo-troco-linha');
-  if (comprovante.troco && comprovante.troco > 0) {
-    linhaTroco.style.display = 'block';
-    document.getElementById('recibo-troco').innerText = formatarMoeda(comprovante.troco);
-  } else {
-    linhaTroco.style.display = 'none';
-  }
+  if (linhaTroco) linhaTroco.style.display = 'none';
 
   abrirModal('modal-recibo');
 }
 
 // ====================================================================
-// FORMULÁRIO DE CADASTRO DE VEÍCULOS (COM LOGIN E SENHA)
+// FORMULÁRIO DE CADASTRO DE VEÍCULOS (COM SELETOR DE CARGO)
 // ====================================================================
 function configurarEventosForms() {
   const formVeiculo = document.getElementById('form-cadastrar-veiculo');
@@ -1035,6 +1110,7 @@ function configurarEventosForms() {
     const placa = document.getElementById('cad-placa').value.trim().toUpperCase();
     const contato = document.getElementById('cad-contato').value.trim();
     const cpf = document.getElementById('cad-cpf').value.trim();
+    const cargo = document.getElementById('cad-cargo')?.value || 'cliente';
     const login = document.getElementById('cad-login').value.trim().toUpperCase() || placa;
     const senha = document.getElementById('cad-senha').value.trim() || '123';
 
@@ -1042,7 +1118,7 @@ function configurarEventosForms() {
       const res = await fetch('/api/veiculos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rfid, nome, placa, contato, cpf, login, senha })
+        body: JSON.stringify({ rfid, nome, placa, contato, cpf, cargo, login, senha })
       });
       const dados = await res.json();
 
@@ -1051,10 +1127,12 @@ function configurarEventosForms() {
         return;
       }
 
-      mostrarToast('Veículo e credenciais cadastradas com sucesso!', 'success');
+      mostrarToast(`Veículo cadastrado com sucesso como ${cargo.toUpperCase()}!`, 'success');
       formVeiculo.reset();
       document.getElementById('cad-senha').value = '123';
+      document.getElementById('cad-cargo').value = 'cliente';
       carregarVeiculos();
+      carregarGestaoCargos();
     } catch (err) {
       console.error('Erro ao cadastrar:', err);
       mostrarToast('Erro ao salvar veículo.', 'danger');
@@ -1073,6 +1151,7 @@ function configurarEventosForms() {
   document.getElementById('btn-limpar-cad')?.addEventListener('click', () => {
     formVeiculo.reset();
     document.getElementById('cad-senha').value = '123';
+    document.getElementById('cad-cargo').value = 'cliente';
   });
 
   document.getElementById('busca-veiculo')?.addEventListener('input', (e) => {
@@ -1082,22 +1161,22 @@ function configurarEventosForms() {
       v.placa.toLowerCase().includes(termo) ||
       v.cpf.toLowerCase().includes(termo) ||
       v.rfid.toLowerCase().includes(termo) ||
+      (v.cargo && v.cargo.toLowerCase().includes(termo)) ||
       (v.login && v.login.toLowerCase().includes(termo))
     );
     renderizarTabelaVeiculos(filtrados);
   });
 
-  // Salvar Tabela de Preços
+  // Salvar Tabela de Preços (5 opções oficiais)
   const formTabela = document.getElementById('form-tabela-precos');
   formTabela?.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const payload = {
-      toleranciaMinutos: document.getElementById('tab-tolerancia').value,
-      primeiraHora: document.getElementById('tab-primeira-hora').value,
-      modoCobranca: document.getElementById('tab-modo-cobranca').value,
-      fracao15min: document.getElementById('tab-fracao-15min').value,
-      horaAdicional: document.getElementById('tab-hora-adicional').value,
+      isencaoMinutos: document.getElementById('tab-isencao').value,
+      valor30min: document.getElementById('tab-30min').value,
+      valor1Hora: document.getElementById('tab-1hora').value,
+      valorHoraAdicional: document.getElementById('tab-hora-adicional').value,
       valorDiaria: document.getElementById('tab-valor-diaria').value,
       limiteHorasDiaria: document.getElementById('tab-limite-diaria').value
     };
@@ -1112,7 +1191,7 @@ function configurarEventosForms() {
       if (dados.sucesso) {
         Estado.tabelaPrecos = dados.tabelaPrecos;
         atualizarCamposTabelaPrecos();
-        mostrarToast('Tabela de preços atualizada com sucesso!', 'success');
+        mostrarToast('Tabela de preços com as 5 opções atualizada com sucesso!', 'success');
       }
     } catch (err) {
       mostrarToast('Erro ao atualizar tabela.', 'danger');
@@ -1131,23 +1210,30 @@ function renderizarTabelaVeiculos(lista) {
     return;
   }
 
-  tbody.innerHTML = lista.map(v => `
-    <tr>
-      <td><span class="rfid-tag-badge">${v.rfid}</span></td>
-      <td><span class="car-badge" style="font-size: 0.85rem; padding: 0.2rem 0.5rem;">${v.placa}</span></td>
-      <td><strong>${v.nome}</strong></td>
-      <td>${v.contato}</td>
-      <td><code>${v.login || v.placa}</code> / •••</td>
-      <td style="text-align: right;">
-        <button class="btn btn-outline btn-sm" title="Simular Entrada com este RFID" onclick="processarLeituraRFID('${v.rfid}')">
-          <i class="fa-solid fa-play text-primary"></i>
-        </button>
-        <button class="btn btn-outline btn-sm" title="Excluir veículo" style="color: var(--danger);" onclick="excluirVeiculo('${v.rfid}')">
-          <i class="fa-solid fa-trash"></i>
-        </button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = lista.map(v => {
+    const isAdmin = v.cargo === 'admin';
+    const badgeCargo = isAdmin
+      ? `<span class="badge" style="background: #dbeafe; color: #1e40af; font-weight: 700; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;">Admin</span>`
+      : `<span class="badge" style="background: #dcfce7; color: #15803d; font-weight: 700; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;">Cliente</span>`;
+
+    return `
+      <tr>
+        <td><span class="rfid-tag-badge">${v.rfid}</span></td>
+        <td><span class="car-badge" style="font-size: 0.85rem; padding: 0.2rem 0.5rem;">${v.placa}</span></td>
+        <td><strong>${v.nome}</strong></td>
+        <td>${badgeCargo}</td>
+        <td><code>${v.login || v.placa}</code> / •••</td>
+        <td style="text-align: right;">
+          <button class="btn btn-outline btn-sm" title="Simular Entrada com este RFID" onclick="processarLeituraRFID('${v.rfid}')">
+            <i class="fa-solid fa-play text-primary"></i>
+          </button>
+          <button class="btn btn-outline btn-sm" title="Excluir veículo" style="color: var(--danger);" onclick="excluirVeiculo('${v.rfid}')">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
 async function excluirVeiculo(rfid) {
@@ -1159,6 +1245,7 @@ async function excluirVeiculo(rfid) {
     if (dados.sucesso) {
       mostrarToast(dados.mensagem, 'success');
       carregarVeiculos();
+      carregarGestaoCargos();
     } else {
       mostrarToast(dados.mensagem, 'danger');
     }
@@ -1209,7 +1296,7 @@ function renderizarTabelaHistorico(lista) {
         <td>${dataSaida}</td>
         <td>${s.tempoFormatado || '-'}</td>
         <td style="font-weight: 700; color: var(--success);">${valor}</td>
-        <td><span class="badge" style="background: #f1f5f9; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">${s.formaPagamento || '-'}</span></td>
+        <td><span class="badge" style="background: #f1f5f9; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">${s.formaPagamento || 'PIX'}</span></td>
         <td style="text-align: right;">
           <button class="btn btn-outline btn-sm" onclick="reimprimirRecibo('${s.id}')">
             <i class="fa-solid fa-receipt"></i> Recibo
@@ -1239,13 +1326,240 @@ function reimprimirRecibo(sessaoId) {
     dataSaida: new Date(s.saida).toLocaleString('pt-BR'),
     duracaoFormatada: s.tempoFormatado,
     valorTotal: s.valorCobrado,
-    formaPagamento: (s.formaPagamento || 'DINHEIRO').toUpperCase(),
-    troco: s.troco || 0,
+    formaPagamento: (s.formaPagamento || 'PIX').toUpperCase(),
     detalhesCalculo: s.historicoCalculo || 'Cobrança padrão',
     emitidoEm: new Date().toLocaleString('pt-BR')
   };
 
   abrirModalRecibo(comprovante);
+}
+
+// ====================================================================
+// EXPORTAÇÃO PARA EXCEL (CSV FORMATADO COM UTF-8 BOM E DELIMITADOR ';')
+// ====================================================================
+function configurarEventosExportacao() {
+  // 1. Exportar Histórico de Tickets
+  document.getElementById('btn-exportar-historico-excel')?.addEventListener('click', () => {
+    exportarHistoricoTicketsExcel();
+  });
+
+  // 2. Exportar Gestão de Cargos
+  document.getElementById('btn-exportar-cargos-excel')?.addEventListener('click', () => {
+    exportarCargosExcel();
+  });
+
+  // 3. Exportar Cadastros de Veículos
+  document.getElementById('btn-exportar-veiculos-excel')?.addEventListener('click', () => {
+    exportarCadastrosVeiculosExcel();
+  });
+}
+
+function exportarTabelaParaExcel({ nomeArquivo, cabecalhos, linhas }) {
+  if (!linhas || linhas.length === 0) {
+    mostrarToast('Nenhum registro encontrado para exportar.', 'warning');
+    return;
+  }
+
+  const separador = ';';
+  // \uFEFF é o Byte Order Mark (BOM) para o Microsoft Excel interpretar como UTF-8
+  let csv = '\uFEFF';
+
+  // Cabeçalhos
+  csv += cabecalhos.map(c => `"${String(c).replace(/"/g, '""')}"`).join(separador) + '\r\n';
+
+  // Linhas
+  linhas.forEach(linha => {
+    const linhaFormatada = linha.map(col => {
+      let val = col !== null && col !== undefined ? String(col) : '';
+      return `"${val.replace(/"/g, '""')}"`;
+    }).join(separador);
+    csv += linhaFormatada + '\r\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dataHoje = new Date().toISOString().slice(0, 10);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `${nomeArquivo}_${dataHoje}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  mostrarToast(`Planilha ${nomeArquivo}.csv exportada com sucesso!`, 'success');
+}
+
+async function exportarHistoricoTicketsExcel() {
+  let lista = Estado.historico || [];
+  if (lista.length === 0) {
+    try {
+      const res = await fetch('/api/sessoes/historico');
+      const dados = await res.json();
+      if (dados.sucesso && dados.historico) {
+        lista = dados.historico;
+        Estado.historico = dados.historico;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar histórico para exportar:', e);
+    }
+  }
+
+  if (lista.length === 0) {
+    mostrarToast('O histórico de tickets está vazio no momento.', 'warning');
+    return;
+  }
+
+  const cabecalhos = [
+    'Número do Cupom / Ticket',
+    'Placa do Veículo',
+    'Nome do Titular',
+    'CPF do Titular',
+    'Telefone / Contato',
+    'Código RFID',
+    'Data e Hora de Entrada',
+    'Data e Hora de Saída',
+    'Tempo de Permanência',
+    'Valor Cobrado (R$)',
+    'Forma de Pagamento',
+    'Status do Pagamento',
+    'Histórico de Cálculo'
+  ];
+
+  const linhas = lista.map(s => {
+    const cupomId = 'REC-' + s.id.replace('SES-', '');
+    const dataEntrada = s.entrada ? new Date(s.entrada).toLocaleString('pt-BR') : '-';
+    const dataSaida = s.saida ? new Date(s.saida).toLocaleString('pt-BR') : '-';
+    const valorCobrado = Number(s.valorCobrado || 0).toFixed(2).replace('.', ',');
+
+    return [
+      cupomId,
+      s.veiculo?.placa || '-',
+      s.veiculo?.nome || '-',
+      s.veiculo?.cpf || '-',
+      s.veiculo?.contato || '-',
+      s.rfid || '-',
+      dataEntrada,
+      dataSaida,
+      s.tempoFormatado || '-',
+      `R$ ${valorCobrado}`,
+      (s.formaPagamento || 'PIX').toUpperCase(),
+      s.status || 'PAGO',
+      s.historicoCalculo || 'Cobrança padrão'
+    ];
+  });
+
+  exportarTabelaParaExcel({
+    nomeArquivo: 'historico_tickets_estacionamento',
+    cabecalhos,
+    linhas
+  });
+}
+
+async function exportarCargosExcel() {
+  let lista = Estado.usuariosCargos || [];
+  if (lista.length === 0) {
+    try {
+      const res = await fetch('/api/cargos/usuarios');
+      const dados = await res.json();
+      if (dados.sucesso && dados.usuarios) {
+        lista = dados.usuarios;
+        Estado.usuariosCargos = dados.usuarios;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar lista de cargos para exportar:', e);
+    }
+  }
+
+  if (lista.length === 0) {
+    mostrarToast('Nenhum usuário cadastrado para exportação.', 'warning');
+    return;
+  }
+
+  const cabecalhos = [
+    'Nome Completo',
+    'Identificador / Login',
+    'Placa do Veículo',
+    'CPF do Usuário',
+    'Código RFID',
+    'Tipo de Conta',
+    'Cargo Definido',
+    'Nível de Acesso'
+  ];
+
+  const linhas = lista.map(u => {
+    const isMaster = Boolean(u.isMaster || u.id === 'ADMIN-MASTER' || u.tipo === 'admin_master');
+    const cargoNome = u.cargo === 'admin' ? 'Administrador' : 'Cliente';
+    const nivelAcesso = u.cargo === 'admin'
+      ? 'Acesso Geral (Guarita, Pátio, Preços e Cargos)'
+      : 'Acesso Restrito (Portal do seu próprio veículo e pagamento PIX)';
+
+    return [
+      u.nome || '-',
+      u.login || u.placa || '-',
+      u.placa || '-',
+      u.cpf || '-',
+      u.rfid || '-',
+      isMaster ? 'Admin Master' : 'Veículo / Motorista',
+      cargoNome,
+      nivelAcesso
+    ];
+  });
+
+  exportarTabelaParaExcel({
+    nomeArquivo: 'relatorio_gestao_cargos',
+    cabecalhos,
+    linhas
+  });
+}
+
+async function exportarCadastrosVeiculosExcel() {
+  let lista = Estado.veiculos || [];
+  if (lista.length === 0) {
+    try {
+      const res = await fetch('/api/veiculos');
+      const dados = await res.json();
+      if (dados.sucesso && dados.veiculos) {
+        lista = dados.veiculos;
+        Estado.veiculos = dados.veiculos;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar veículos para exportar:', e);
+    }
+  }
+
+  if (lista.length === 0) {
+    mostrarToast('Nenhum veículo cadastrado para exportação.', 'warning');
+    return;
+  }
+
+  const cabecalhos = [
+    'Código RFID',
+    'Placa do Carro',
+    'Nome do Titular',
+    'CPF do Titular',
+    'Telefone / Contato',
+    'Cargo de Acesso',
+    'Login de Usuário',
+    'Data de Cadastro'
+  ];
+
+  const linhas = lista.map(v => [
+    v.rfid || '-',
+    v.placa || '-',
+    v.nome || '-',
+    v.cpf || '-',
+    v.contato || '-',
+    v.cargo === 'admin' ? 'Administrador' : 'Cliente',
+    v.login || v.placa,
+    v.criadoEm ? new Date(v.criadoEm).toLocaleString('pt-BR') : '-'
+  ]);
+
+  exportarTabelaParaExcel({
+    nomeArquivo: 'cadastros_veiculos_rfid',
+    cabecalhos,
+    linhas
+  });
 }
 
 // ====================================================================
@@ -1293,51 +1607,57 @@ function simularTagRapida(rfid) {
 }
 
 // ====================================================================
-// CÁLCULOS, TEMPO E FORMATAÇÃO
+// CÁLCULO DAS 5 OPÇÕES OFICIAIS, TEMPO E FORMATAÇÃO
 // ====================================================================
 function calcularValorTempoReal(entradaMs, saidaMs) {
   const diffMs = Math.max(0, saidaMs - entradaMs);
   const totalMinutos = Math.max(1, Math.ceil(diffMs / 60000));
 
   const t = Estado.tabelaPrecos || {};
-  const tolerancia = Number(t.toleranciaMinutos) || 10;
-  const primeiraHora = Number(t.primeiraHora) || 5.0;
-  const horaAdicional = Number(t.horaAdicional) || 5.0;
-  const fracao15min = Number(t.fracao15min) || 2.0;
-  const valorDiaria = Number(t.valorDiaria) || 50.0;
-  const limiteDiariaMin = (Number(t.limiteHorasDiaria) || 8) * 60;
+  const isencaoMinutos = Number(t.isencaoMinutos ?? 15);
+  const valor30min = Number(t.valor30min ?? 5.0);
+  const valor1Hora = Number(t.valor1Hora ?? 10.0);
+  const valorHoraAdicional = Number(t.valorHoraAdicional ?? 5.0);
+  const valorDiaria = Number(t.valorDiaria ?? 40.0);
+  const limiteDiariaMin = (Number(t.limiteHorasDiaria ?? 8)) * 60;
 
-  if (totalMinutos <= tolerancia) {
+  // 1. Isenção
+  if (totalMinutos <= isencaoMinutos) {
     return {
       valorTotal: 0.00,
-      detalhes: `Dentro da tolerância gratuita (${tolerancia} min)`
+      detalhes: `Dentro do período de isenção gratuita (${isencaoMinutos} min)`
     };
   }
 
+  // 5. Diária (limite de horas atingido)
   if (totalMinutos >= limiteDiariaMin) {
     return {
       valorTotal: valorDiaria,
-      detalhes: `Tarifa Diária máxima aplicada (acima de ${t.limiteHorasDiaria}h)`
+      detalhes: `Tarifa Diária máxima aplicada (acima de ${t.limiteHorasDiaria || 8}h)`
     };
   }
 
-  let valor = primeiraHora;
-  let detalhes = `1ª Hora: R$ ${primeiraHora.toFixed(2)}`;
-
-  if (totalMinutos > 60) {
-    const excedente = totalMinutos - 60;
-    if (t.modoCobranca === 'hora_fracao') {
-      const qtdFracoes = Math.ceil(excedente / 15);
-      const valorFracoes = qtdFracoes * fracao15min;
-      valor += valorFracoes;
-      detalhes += ` + ${qtdFracoes} fração(ões) 15m (R$ ${valorFracoes.toFixed(2)})`;
-    } else {
-      const horasExcedentes = Math.ceil(excedente / 60);
-      const valorHoras = horasExcedentes * horaAdicional;
-      valor += valorHoras;
-      detalhes += ` + ${horasExcedentes}h adic. (R$ ${valorHoras.toFixed(2)})`;
-    }
+  // 2. Até 30 minutos
+  if (totalMinutos <= 30) {
+    return {
+      valorTotal: valor30min,
+      detalhes: `Permanência de até 30 minutos (R$ ${valor30min.toFixed(2)})`
+    };
   }
+
+  // 3. Até 1 hora
+  if (totalMinutos <= 60) {
+    return {
+      valorTotal: valor1Hora,
+      detalhes: `Permanência de até 1 hora (R$ ${valor1Hora.toFixed(2)})`
+    };
+  }
+
+  // 4. Hora adicional
+  const excedenteMin = totalMinutos - 60;
+  const horasExtras = Math.ceil(excedenteMin / 60);
+  let valor = valor1Hora + (horasExtras * valorHoraAdicional);
+  let detalhes = `1ª Hora (R$ ${valor1Hora.toFixed(2)}) + ${horasExtras}h adic. (R$ ${(horasExtras * valorHoraAdicional).toFixed(2)})`;
 
   if (valor > valorDiaria) {
     valor = valorDiaria;

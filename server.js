@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { CONFIG_PIX, gerarCobrancaPix, gerarPayloadPixCopiaECola } = require('./pixService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,19 +24,25 @@ function lerBanco() {
     if (!fs.existsSync(DB_FILE)) {
       const dbInicial = {
         tabelaPrecos: {
-          toleranciaMinutos: 10,
-          primeiraHora: 5.0,
-          horaAdicional: 5.0,
-          fracao15min: 2.0,
-          valorDiaria: 50.0,
-          limiteHorasDiaria: 8,
-          modoCobranca: 'hora_fracao'
+          isencaoMinutos: 15,
+          valor30min: 5.0,
+          valor1Hora: 10.0,
+          valorHoraAdicional: 5.0,
+          valorDiaria: 40.0,
+          limiteHorasDiaria: 8
         },
         config: {
           admin: {
             login: 'admin',
             senha: '123',
-            nome: 'Administrador SmartPark'
+            nome: 'Administrador SmartPark',
+            cargo: 'admin'
+          },
+          pix: {
+            chave: 'pex-estacionamento-2026@arduino.org',
+            tipoChave: 'EMAIL',
+            beneficiario: 'SmartPark Estacionamento PEX',
+            cidade: 'MANAUS'
           }
         },
         veiculos: [],
@@ -47,9 +54,18 @@ function lerBanco() {
     const data = fs.readFileSync(DB_FILE, 'utf-8');
     const db = JSON.parse(data);
 
-    if (!db.config) {
-      db.config = {
-        admin: { login: 'admin', senha: '123', nome: 'Administrador SmartPark' }
+    if (!db.config) db.config = {};
+    if (!db.config.admin) {
+      db.config.admin = { login: 'admin', senha: '123', nome: 'Administrador SmartPark', cargo: 'admin' };
+    }
+    if (!db.tabelaPrecos) {
+      db.tabelaPrecos = {
+        isencaoMinutos: 15,
+        valor30min: 5.0,
+        valor1Hora: 10.0,
+        valorHoraAdicional: 5.0,
+        valorDiaria: 40.0,
+        limiteHorasDiaria: 8
       };
     }
     return db;
@@ -79,7 +95,12 @@ function enviarEvento(tipo, dados) {
 }
 
 // ====================================================================
-// REGRA DE CÁLCULO DA TABELA DE PREÇOS
+// REGRA DE CÁLCULO DA TABELA DE PREÇOS (5 OPÇÕES OFICIAIS)
+// 1. Isenção (em minutos)
+// 2. 30 minutos
+// 3. 1 hora
+// 4. Hora adicional
+// 5. Diária
 // ====================================================================
 function calcularValorEstacionamento(entradaMs, saidaMs, tabela) {
   const diffMs = Math.max(0, saidaMs - entradaMs);
@@ -96,26 +117,26 @@ function calcularValorEstacionamento(entradaMs, saidaMs, tabela) {
     tempoFormatado = `${totalMinutos} min`;
   }
 
-  const tolerancia = Number(tabela.toleranciaMinutos) || 10;
-  const primeiraHora = Number(tabela.primeiraHora) || 5.0;
-  const horaAdicional = Number(tabela.horaAdicional) || 5.0;
-  const fracao15min = Number(tabela.fracao15min) || 2.0;
-  const valorDiaria = Number(tabela.valorDiaria) || 50.0;
+  const isencaoMinutos = Number(tabela.isencaoMinutos !== undefined ? tabela.isencaoMinutos : (tabela.toleranciaMinutos || 15));
+  const valor30min = Number(tabela.valor30min !== undefined ? tabela.valor30min : 5.0);
+  const valor1Hora = Number(tabela.valor1Hora !== undefined ? tabela.valor1Hora : (tabela.primeiraHora || 10.0));
+  const valorHoraAdicional = Number(tabela.valorHoraAdicional !== undefined ? tabela.valorHoraAdicional : (tabela.horaAdicional || 5.0));
+  const valorDiaria = Number(tabela.valorDiaria || 40.0);
   const limiteDiariaMin = (Number(tabela.limiteHorasDiaria) || 8) * 60;
 
-  // 1. Tolerância
-  if (totalMinutos <= tolerancia) {
+  // 1. Isenção (Tolerância gratuita)
+  if (totalMinutos <= isencaoMinutos) {
     return {
       tempoMinutos: totalMinutos,
       tempoSegundos: totalSegundos,
       tempoFormatado,
       valorTotal: 0.00,
       isTolerancia: true,
-      detalhes: `Tempo dentro do período de tolerância gratuita (${tolerancia} min). Valor isento.`
+      detalhes: `Período de isenção gratuito (${isencaoMinutos} min). Valor isento.`
     };
   }
 
-  // 2. Diária
+  // 2. Diária (quando o tempo atinge o limite de horas configurado)
   if (totalMinutos >= limiteDiariaMin) {
     return {
       tempoMinutos: totalMinutos,
@@ -123,31 +144,41 @@ function calcularValorEstacionamento(entradaMs, saidaMs, tabela) {
       tempoFormatado,
       valorTotal: valorDiaria,
       isTolerancia: false,
-      detalhes: `Tempo superior a ${tabela.limiteHorasDiaria}h. Aplicada tarifa diária máxima de R$ ${valorDiaria.toFixed(2)}.`
+      detalhes: `Estadia superior a ${tabela.limiteHorasDiaria || 8}h. Aplicada tarifa diária de R$ ${valorDiaria.toFixed(2)}.`
     };
   }
 
-  // 3. Primeira hora
-  let valor = primeiraHora;
-  let detalhes = `1ª Hora: R$ ${primeiraHora.toFixed(2)}`;
-
-  // 4. Minutos adicionais além de 60 min
-  if (totalMinutos > 60) {
-    const excedente = totalMinutos - 60;
-    if (tabela.modoCobranca === 'hora_fracao') {
-      const qtdFracoes = Math.ceil(excedente / 15);
-      const valorFracoes = qtdFracoes * fracao15min;
-      valor += valorFracoes;
-      detalhes += ` + ${qtdFracoes} fração(ões) de 15min (${excedente}m excedentes): R$ ${valorFracoes.toFixed(2)}`;
-    } else {
-      const horasExcedentes = Math.ceil(excedente / 60);
-      const valorHoras = horasExcedentes * horaAdicional;
-      valor += valorHoras;
-      detalhes += ` + ${horasExcedentes}h adicional(is): R$ ${valorHoras.toFixed(2)}`;
-    }
+  // 3. Até 30 minutos
+  if (totalMinutos <= 30) {
+    return {
+      tempoMinutos: totalMinutos,
+      tempoSegundos: totalSegundos,
+      tempoFormatado,
+      valorTotal: Number(valor30min.toFixed(2)),
+      isTolerancia: false,
+      detalhes: `Permanência de até 30 minutos: R$ ${valor30min.toFixed(2)}`
+    };
   }
 
-  // Não excede o valor da diária
+  // 4. Até 1 hora (60 minutos)
+  if (totalMinutos <= 60) {
+    return {
+      tempoMinutos: totalMinutos,
+      tempoSegundos: totalSegundos,
+      tempoFormatado,
+      valorTotal: Number(valor1Hora.toFixed(2)),
+      isTolerancia: false,
+      detalhes: `Permanência de até 1 hora: R$ ${valor1Hora.toFixed(2)}`
+    };
+  }
+
+  // 5. Hora adicional (acima de 60 minutos)
+  const excedente = totalMinutos - 60;
+  const horasExcedentes = Math.ceil(excedente / 60);
+  let valor = valor1Hora + (horasExcedentes * valorHoraAdicional);
+  let detalhes = `1ª Hora: R$ ${valor1Hora.toFixed(2)} + ${horasExcedentes}h adicional(is): R$ ${(horasExcedentes * valorHoraAdicional).toFixed(2)}`;
+
+  // Não excede o teto da diária
   if (valor > valorDiaria) {
     valor = valorDiaria;
     detalhes += ` (limitado ao teto da diária de R$ ${valorDiaria.toFixed(2)})`;
@@ -184,7 +215,8 @@ app.get('/api/eventos', (req, res) => {
 });
 
 // ====================================================================
-// AUTENTICAÇÃO E CARGOS (ADMIN vs CLIENTE)
+// AUTENTICAÇÃO UNIFICADA (TELA ÚNICA DE LOGIN)
+// Reconhece automaticamente Administradores e Clientes
 // ====================================================================
 app.post('/api/auth/login', (req, res) => {
   const db = lerBanco();
@@ -197,21 +229,22 @@ app.post('/api/auth/login', (req, res) => {
   const loginLimpo = login.trim().toLowerCase();
   const senhaLimpa = senha.trim();
 
-  // 1. Verifica se é Administrador
-  const adminConfig = db.config?.admin || { login: 'admin', senha: '123', nome: 'Administrador SmartPark' };
+  // 1. Verifica Administrador Master configurado
+  const adminConfig = db.config?.admin || { login: 'admin', senha: '123', nome: 'Administrador SmartPark', cargo: 'admin' };
   if (loginLimpo === adminConfig.login.toLowerCase() && senhaLimpa === adminConfig.senha) {
     return res.json({
       sucesso: true,
       token: 'token-admin-' + Date.now(),
       usuario: {
         role: 'admin',
+        cargo: 'admin',
         nome: adminConfig.nome || 'Administrador',
         login: adminConfig.login
       }
     });
   }
 
-  // 2. Verifica se é um Cliente / Veículo cadastrado
+  // 2. Verifica usuários/veículos cadastrados
   const veiculo = db.veiculos.find(v => {
     const vLogin = (v.login || v.placa || '').toLowerCase().trim();
     const vPlaca = (v.placa || '').toLowerCase().trim();
@@ -226,11 +259,15 @@ app.post('/api/auth/login', (req, res) => {
   });
 
   if (veiculo) {
+    const isCargoAdmin = (veiculo.cargo === 'admin');
     return res.json({
       sucesso: true,
-      token: 'token-cliente-' + veiculo.id + '-' + Date.now(),
+      token: 'token-' + (isCargoAdmin ? 'admin-' : 'cliente-') + veiculo.id + '-' + Date.now(),
       usuario: {
-        role: 'cliente',
+        role: isCargoAdmin ? 'admin' : 'cliente',
+        cargo: isCargoAdmin ? 'admin' : 'cliente',
+        nome: veiculo.nome,
+        login: veiculo.login || veiculo.placa,
         veiculo: {
           id: veiculo.id,
           rfid: veiculo.rfid,
@@ -238,7 +275,8 @@ app.post('/api/auth/login', (req, res) => {
           placa: veiculo.placa,
           contato: veiculo.contato,
           cpf: veiculo.cpf,
-          login: veiculo.login || veiculo.placa
+          login: veiculo.login || veiculo.placa,
+          cargo: veiculo.cargo || 'cliente'
         }
       }
     });
@@ -247,6 +285,83 @@ app.post('/api/auth/login', (req, res) => {
   return res.status(401).json({
     sucesso: false,
     mensagem: 'Usuário ou senha incorretos. Verifique suas credenciais.'
+  });
+});
+
+// ====================================================================
+// GESTÃO DE CARGOS (EXCLUSIVO ADMINISTRADOR)
+// ====================================================================
+app.get('/api/cargos/usuarios', (req, res) => {
+  const db = lerBanco();
+  const lista = [];
+
+  // Admin Master
+  const adminConfig = db.config?.admin || { login: 'admin', nome: 'Administrador SmartPark', cargo: 'admin' };
+  lista.push({
+    id: 'ADMIN-MASTER',
+    nome: adminConfig.nome || 'Administrador SmartPark',
+    login: adminConfig.login,
+    placa: '---',
+    cpf: 'Administrador Geral',
+    cargo: 'admin',
+    isMaster: true
+  });
+
+  // Veículos / Usuários cadastrados
+  db.veiculos.forEach(v => {
+    lista.push({
+      id: v.id,
+      rfid: v.rfid,
+      nome: v.nome,
+      login: v.login || v.placa,
+      placa: v.placa,
+      cpf: v.cpf,
+      cargo: v.cargo || 'cliente',
+      isMaster: false
+    });
+  });
+
+  res.json({ sucesso: true, usuarios: lista });
+});
+
+app.put('/api/cargos/usuarios/:id', (req, res) => {
+  const db = lerBanco();
+  const { id } = req.params;
+  const { cargo } = req.body;
+
+  if (!['admin', 'cliente'].includes(cargo)) {
+    return res.status(400).json({ sucesso: false, mensagem: 'Cargo inválido. Escolha "admin" ou "cliente".' });
+  }
+
+  // Se for o Admin Master
+  if (id === 'ADMIN-MASTER' || id === 'admin') {
+    if (!db.config.admin) {
+      db.config.admin = { login: 'admin', senha: '123', nome: 'Administrador SmartPark', cargo: 'admin' };
+    }
+    db.config.admin.cargo = cargo;
+    salvarBanco(db);
+    enviarEvento('cargos_atualizados', { id: 'ADMIN-MASTER', cargo });
+    return res.json({
+      sucesso: true,
+      mensagem: `Cargo do Administrador Master atualizado para ${cargo === 'admin' ? 'Administrador' : 'Cliente'}!`,
+      usuario: db.config.admin
+    });
+  }
+
+  // Busca o veículo por id, rfid, placa ou login
+  const veiculo = db.veiculos.find(v => v.id === id || v.rfid === id || v.placa === id || (v.login && v.login === id));
+  if (!veiculo) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Usuário não encontrado.' });
+  }
+
+  veiculo.cargo = cargo;
+  salvarBanco(db);
+
+  enviarEvento('cargos_atualizados', { id: veiculo.id, cargo });
+  res.json({
+    sucesso: true,
+    mensagem: `Cargo de ${veiculo.nome} atualizado para ${cargo === 'admin' ? 'Administrador' : 'Cliente'} com sucesso!`,
+    veiculo
   });
 });
 
@@ -292,7 +407,8 @@ app.get('/api/cliente/meu-veiculo/:rfid', (req, res) => {
       placa: veiculo.placa,
       contato: veiculo.contato,
       cpf: veiculo.cpf,
-      login: veiculo.login || veiculo.placa
+      login: veiculo.login || veiculo.placa,
+      cargo: veiculo.cargo || 'cliente'
     },
     estacionado: !!sessaoAtiva,
     sessaoAtiva: dadosSessao,
@@ -355,7 +471,7 @@ app.get('/api/veiculos/:rfid', (req, res) => {
 
 app.post('/api/veiculos', (req, res) => {
   const db = lerBanco();
-  let { rfid, nome, placa, contato, cpf, login, senha } = req.body;
+  let { rfid, nome, placa, contato, cpf, login, senha, cargo = 'cliente' } = req.body;
 
   if (!rfid || !nome || !placa || !contato || !cpf) {
     return res.status(400).json({ sucesso: false, mensagem: 'Todos os campos são obrigatórios (RFID, Nome, Placa, Contato, CPF).' });
@@ -368,8 +484,8 @@ app.post('/api/veiculos', (req, res) => {
   cpf = cpf.trim();
   login = (login || placa).trim().toUpperCase();
   senha = (senha || '123').trim();
+  cargo = cargo === 'admin' ? 'admin' : 'cliente';
 
-  // Verifica se o RFID já está cadastrado
   const existente = db.veiculos.find(v => v.rfid.toUpperCase() === rfid);
   if (existente) {
     return res.status(409).json({ sucesso: false, mensagem: `O código RFID ${rfid} já está cadastrado para o veículo ${existente.placa} (${existente.nome}).` });
@@ -384,6 +500,7 @@ app.post('/api/veiculos', (req, res) => {
     cpf,
     login,
     senha,
+    cargo,
     criadoEm: new Date().toISOString()
   };
 
@@ -392,7 +509,7 @@ app.post('/api/veiculos', (req, res) => {
 
   enviarEvento('veiculo_cadastrado', novoVeiculo);
 
-  res.status(201).json({ sucesso: true, mensagem: 'Veículo e RFID cadastrados com sucesso!', veiculo: novoVeiculo });
+  res.status(201).json({ sucesso: true, mensagem: 'Veículo cadastrado com sucesso!', veiculo: novoVeiculo });
 });
 
 app.put('/api/veiculos/:rfid', (req, res) => {
@@ -404,13 +521,14 @@ app.put('/api/veiculos/:rfid', (req, res) => {
     return res.status(404).json({ sucesso: false, mensagem: 'Veículo não encontrado para alteração.' });
   }
 
-  const { nome, placa, contato, cpf, login, senha } = req.body;
+  const { nome, placa, contato, cpf, login, senha, cargo } = req.body;
   if (nome) db.veiculos[index].nome = nome.trim();
   if (placa) db.veiculos[index].placa = placa.trim().toUpperCase();
   if (contato) db.veiculos[index].contato = contato.trim();
   if (cpf) db.veiculos[index].cpf = cpf.trim();
   if (login) db.veiculos[index].login = login.trim().toUpperCase();
   if (senha) db.veiculos[index].senha = senha.trim();
+  if (cargo) db.veiculos[index].cargo = cargo === 'admin' ? 'admin' : 'cliente';
 
   salvarBanco(db);
   res.json({ sucesso: true, mensagem: 'Cadastro atualizado com sucesso!', veiculo: db.veiculos[index] });
@@ -449,7 +567,6 @@ app.post('/api/leitura-rfid', (req, res) => {
 
   rfid = rfid.trim().toUpperCase();
 
-  // 1. Verifica se o RFID está cadastrado
   const veiculo = db.veiculos.find(v => v.rfid.toUpperCase() === rfid);
 
   if (!veiculo) {
@@ -464,7 +581,6 @@ app.post('/api/leitura-rfid', (req, res) => {
     });
   }
 
-  // 2. Veículo cadastrado: verifica se já está estacionado
   const sessaoAberta = db.sessoes.find(s => s.rfid.toUpperCase() === rfid && s.status === 'ESTACIONADO');
 
   if (sessaoAberta) {
@@ -480,7 +596,7 @@ app.post('/api/leitura-rfid', (req, res) => {
     });
   }
 
-  // 3. REGISTRA A ENTRADA E INICIA O TEMPORIZADOR!
+  // REGISTRA ENTRADA E INICIA O TEMPORIZADOR!
   const agora = Date.now();
   const novaSessao = {
     id: 'SES-' + agora,
@@ -495,7 +611,7 @@ app.post('/api/leitura-rfid', (req, res) => {
     saida: null,
     status: 'ESTACIONADO',
     valorCobrado: null,
-    formaPagamento: null,
+    formaPagamento: 'PIX',
     historicoCalculo: null
   };
 
@@ -564,7 +680,114 @@ app.post('/api/sessoes/:id/cancelar', (req, res) => {
 });
 
 // ====================================================================
-// FUNCIONALIDADE DO SITE: PAGAMENTO
+// ROTAS PIX: GERAÇÃO DE COBRANÇA E WEBHOOK
+// ====================================================================
+
+// 1. Gera cobrança PIX dinâmica para a sessão ativa
+app.post('/api/pagamento/pix/gerar', (req, res) => {
+  const db = lerBanco();
+  const { sessaoId, rfid } = req.body;
+
+  let sessao = null;
+  if (sessaoId) {
+    sessao = db.sessoes.find(s => s.id === sessaoId && s.status === 'ESTACIONADO');
+  } else if (rfid) {
+    sessao = db.sessoes.find(s => s.rfid.toUpperCase() === rfid.trim().toUpperCase() && s.status === 'ESTACIONADO');
+  }
+
+  if (!sessao) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Sessão ativa não encontrada.' });
+  }
+
+  const agora = Date.now();
+  const calculo = calcularValorEstacionamento(sessao.entrada, agora, db.tabelaPrecos);
+
+  const cobrancaPix = gerarCobrancaPix({
+    sessaoId: sessao.id,
+    valor: calculo.valorTotal,
+    placa: sessao.veiculo.placa,
+    titular: sessao.veiculo.nome
+  });
+
+  res.json({
+    sucesso: true,
+    sessao,
+    calculo,
+    cobrancaPix,
+    pix: {
+      chavePix: cobrancaPix.chave,
+      copiaECola: cobrancaPix.copiaECola,
+      valor: cobrancaPix.valor,
+      txid: cobrancaPix.txid
+    }
+  });
+});
+
+// 2. Webhook oficial da API do PIX (Mercado Pago, EFI Bank, Banco Inter, Asaas, etc.)
+// Chamado pelo banco quando o cliente transfere via PIX
+app.post('/api/pix/webhook', (req, res) => {
+  const db = lerBanco();
+  const payload = req.body || {};
+
+  console.log('[PIX Webhook] Notificação recebida da API Bancária:', JSON.stringify(payload));
+
+  // Extrai identificador da transação ou sessão enviado pelo gateway
+  const txid = payload.txid || payload.id || (payload.data && payload.data.id);
+  const status = payload.status || (payload.action === 'payment.created' ? 'approved' : 'approved');
+
+  // Localiza a sessão associada
+  const index = db.sessoes.findIndex(s => s.status === 'ESTACIONADO');
+  if (index === -1) {
+    return res.status(200).json({ status: 'ignored', message: 'Nenhuma sessão ativa aguardando PIX.' });
+  }
+
+  const sessao = db.sessoes[index];
+  const saidaFinal = Date.now();
+  const calculo = calcularValorEstacionamento(sessao.entrada, saidaFinal, db.tabelaPrecos);
+
+  sessao.status = 'PAGO';
+  sessao.saida = saidaFinal;
+  sessao.tempoMinutos = calculo.tempoMinutos;
+  sessao.tempoFormatado = calculo.tempoFormatado;
+  sessao.valorBase = calculo.valorTotal;
+  sessao.desconto = 0;
+  sessao.acrescimo = 0;
+  sessao.valorCobrado = calculo.valorTotal;
+  sessao.formaPagamento = 'PIX';
+  sessao.valorRecebido = calculo.valorTotal;
+  sessao.troco = 0;
+  sessao.historicoCalculo = calculo.detalhes;
+
+  const comprovante = {
+    numeroCupom: 'REC-' + sessao.id.replace('SES-', ''),
+    sessaoId: sessao.id,
+    rfid: sessao.rfid,
+    titular: sessao.veiculo.nome,
+    cpf: sessao.veiculo.cpf,
+    placa: sessao.veiculo.placa,
+    contato: sessao.veiculo.contato,
+    dataEntrada: new Date(sessao.entrada).toLocaleString('pt-BR'),
+    dataSaida: new Date(sessao.saida).toLocaleString('pt-BR'),
+    duracaoFormatada: calculo.tempoFormatado,
+    valorTotal: calculo.valorTotal,
+    formaPagamento: 'PIX',
+    valorRecebido: calculo.valorTotal,
+    troco: 0,
+    detalhesCalculo: calculo.detalhes,
+    emitidoEm: new Date().toLocaleString('pt-BR')
+  };
+
+  salvarBanco(db);
+
+  // Notifica o frontend em tempo real e libera a cancela e o ticket!
+  enviarEvento('pagamento_concluido', { sessao, comprovante });
+
+  return res.status(200).json({ sucesso: true, mensagem: 'Pagamento PIX confirmado e ticket liberado!' });
+});
+
+// ====================================================================
+// CÁLCULO E FINALIZAÇÃO DE PAGAMENTO (EXCLUSIVO PIX)
+// Ticket liberado somente após este endpoint confirmar o pagamento
 // ====================================================================
 app.post('/api/pagamento/calcular', (req, res) => {
   const db = lerBanco();
@@ -584,10 +807,18 @@ app.post('/api/pagamento/calcular', (req, res) => {
   const momentoSaida = saidaCustomizada ? Number(saidaCustomizada) : Date.now();
   const calculo = calcularValorEstacionamento(sessao.entrada, momentoSaida, db.tabelaPrecos);
 
+  const cobrancaPix = gerarCobrancaPix({
+    sessaoId: sessao.id,
+    valor: calculo.valorTotal,
+    placa: sessao.veiculo.placa,
+    titular: sessao.veiculo.nome
+  });
+
   res.json({
     sucesso: true,
     sessao,
     saida: momentoSaida,
+    cobrancaPix,
     ...calculo
   });
 });
@@ -596,16 +827,14 @@ app.post('/api/pagamento/finalizar', (req, res) => {
   const db = lerBanco();
   const {
     sessaoId,
-    formaPagamento,
-    valorRecebido,
     saidaTimestamp,
     desconto = 0,
     acrescimo = 0,
     observacoes = ''
   } = req.body;
 
-  if (!sessaoId || !formaPagamento) {
-    return res.status(400).json({ sucesso: false, mensagem: 'Sessão e Forma de Pagamento são obrigatórias.' });
+  if (!sessaoId) {
+    return res.status(400).json({ sucesso: false, mensagem: 'ID da sessão é obrigatório.' });
   }
 
   const index = db.sessoes.findIndex(s => s.id === sessaoId && s.status === 'ESTACIONADO');
@@ -621,12 +850,7 @@ app.post('/api/pagamento/finalizar', (req, res) => {
   if (valorFinal < 0) valorFinal = 0;
   valorFinal = Number(valorFinal.toFixed(2));
 
-  let troco = 0;
-  if (formaPagamento === 'dinheiro' && valorRecebido) {
-    troco = Math.max(0, Number(valorRecebido) - valorFinal);
-    troco = Number(troco.toFixed(2));
-  }
-
+  // Atualiza a sessão para PAGO
   sessao.status = 'PAGO';
   sessao.saida = saidaFinal;
   sessao.tempoMinutos = calculo.tempoMinutos;
@@ -635,13 +859,13 @@ app.post('/api/pagamento/finalizar', (req, res) => {
   sessao.desconto = Number(desconto || 0);
   sessao.acrescimo = Number(acrescimo || 0);
   sessao.valorCobrado = valorFinal;
-  sessao.formaPagamento = formaPagamento;
-  sessao.valorRecebido = valorRecebido ? Number(valorRecebido) : valorFinal;
-  sessao.troco = troco;
+  sessao.formaPagamento = 'PIX';
+  sessao.valorRecebido = valorFinal;
+  sessao.troco = 0;
   sessao.historicoCalculo = calculo.detalhes;
   sessao.observacoes = observacoes;
 
-  // Recibo / Comprovante
+  // Recibo / Comprovante Oficial (TICKET LIBERADO APÓS PAGAMENTO)
   const comprovante = {
     numeroCupom: 'REC-' + sessao.id.replace('SES-', ''),
     sessaoId: sessao.id,
@@ -654,9 +878,9 @@ app.post('/api/pagamento/finalizar', (req, res) => {
     dataSaida: new Date(sessao.saida).toLocaleString('pt-BR'),
     duracaoFormatada: calculo.tempoFormatado,
     valorTotal: valorFinal,
-    formaPagamento: formaPagamento.toUpperCase(),
-    valorRecebido: sessao.valorRecebido,
-    troco: sessao.troco,
+    formaPagamento: 'PIX',
+    valorRecebido: valorFinal,
+    troco: 0,
     detalhesCalculo: calculo.detalhes,
     emitidoEm: new Date().toLocaleString('pt-BR')
   };
@@ -667,14 +891,14 @@ app.post('/api/pagamento/finalizar', (req, res) => {
 
   res.json({
     sucesso: true,
-    mensagem: 'Pagamento concluído com sucesso e cancela liberada!',
+    mensagem: 'Pagamento PIX confirmado com sucesso! Ticket liberado e cancela aberta.',
     sessao,
     comprovante
   });
 });
 
 // ====================================================================
-// ROTAS DA TABELA DE PREÇOS
+// ROTAS DA TABELA DE PREÇOS (5 OPÇÕES OFICIAIS)
 // ====================================================================
 app.get('/api/tabela-precos', (req, res) => {
   const db = lerBanco();
@@ -683,16 +907,15 @@ app.get('/api/tabela-precos', (req, res) => {
 
 app.put('/api/tabela-precos', (req, res) => {
   const db = lerBanco();
-  const { toleranciaMinutos, primeiraHora, horaAdicional, fracao15min, valorDiaria, limiteHorasDiaria, modoCobranca } = req.body;
+  const { isencaoMinutos, valor30min, valor1Hora, valorHoraAdicional, valorDiaria, limiteHorasDiaria } = req.body;
 
   db.tabelaPrecos = {
-    toleranciaMinutos: Number(toleranciaMinutos) >= 0 ? Number(toleranciaMinutos) : db.tabelaPrecos.toleranciaMinutos,
-    primeiraHora: Number(primeiraHora) >= 0 ? Number(primeiraHora) : db.tabelaPrecos.primeiraHora,
-    horaAdicional: Number(horaAdicional) >= 0 ? Number(horaAdicional) : db.tabelaPrecos.horaAdicional,
-    fracao15min: Number(fracao15min) >= 0 ? Number(fracao15min) : db.tabelaPrecos.fracao15min,
-    valorDiaria: Number(valorDiaria) >= 0 ? Number(valorDiaria) : db.tabelaPrecos.valorDiaria,
-    limiteHorasDiaria: Number(limiteHorasDiaria) >= 1 ? Number(limiteHorasDiaria) : db.tabelaPrecos.limiteHorasDiaria,
-    modoCobranca: modoCobranca || db.tabelaPrecos.modoCobranca || 'hora_fracao'
+    isencaoMinutos: Number(isencaoMinutos) >= 0 ? Number(isencaoMinutos) : (db.tabelaPrecos.isencaoMinutos || 15),
+    valor30min: Number(valor30min) >= 0 ? Number(valor30min) : (db.tabelaPrecos.valor30min || 5.0),
+    valor1Hora: Number(valor1Hora) >= 0 ? Number(valor1Hora) : (db.tabelaPrecos.valor1Hora || 10.0),
+    valorHoraAdicional: Number(valorHoraAdicional) >= 0 ? Number(valorHoraAdicional) : (db.tabelaPrecos.valorHoraAdicional || 5.0),
+    valorDiaria: Number(valorDiaria) >= 0 ? Number(valorDiaria) : (db.tabelaPrecos.valorDiaria || 40.0),
+    limiteHorasDiaria: Number(limiteHorasDiaria) >= 1 ? Number(limiteHorasDiaria) : (db.tabelaPrecos.limiteHorasDiaria || 8)
   };
 
   salvarBanco(db);
@@ -701,10 +924,25 @@ app.put('/api/tabela-precos', (req, res) => {
   res.json({ sucesso: true, mensagem: 'Tabela de preços atualizada com sucesso!', tabelaPrecos: db.tabelaPrecos });
 });
 
-// Inicialização do servidor
-app.listen(PORT, () => {
-  console.log(`====================================================`);
-  console.log(` SmartPark RFID - Sistema de Estacionamento (PEX)   `);
-  console.log(` Servidor rodando em: http://localhost:${PORT}        `);
-  console.log(`====================================================`);
-});
+// Inicialização resiliente do servidor com fallback de porta
+function iniciarServidor(porta) {
+  const servidor = app.listen(porta, () => {
+    console.log(`====================================================`);
+    console.log(` SmartPark RFID - Sistema de Estacionamento (PEX)   `);
+    console.log(` Servidor rodando em: http://localhost:${porta}        `);
+    console.log(`====================================================`);
+  });
+
+  servidor.on('error', (err) => {
+    if ((err.code === 'EACCES' || err.code === 'EADDRINUSE') && porta === 3000) {
+      console.warn(`Porta 3000 indisponível (${err.code}). Tentando fallback para porta 3001...`);
+      iniciarServidor(3001);
+    } else {
+      console.error('Erro fatal ao iniciar servidor:', err);
+    }
+  });
+
+  return servidor;
+}
+
+iniciarServidor(PORT);

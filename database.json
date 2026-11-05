@@ -1,6 +1,26 @@
 {
-  "tabelaPrecos": {},
-  "config": {},
+  "tabelaPrecos": {
+    "isencaoMinutos": 0,
+    "valor30min": 5,
+    "valor1Hora": 10,
+    "valorHoraAdicional": 5,
+    "valorDiaria": 40,
+    "limiteHorasDiaria": 8
+  },
+  "config": {
+    "admin": {
+      "login": "admin",
+      "senha": "123",
+      "nome": "Administrador SmartPark",
+      "cargo": "admin"
+    },
+    "pix": {
+      "chave": "andradefcb1212@gmail.com",
+      "tipoChave": "EMAIL",
+      "beneficiario": "Thiago Andrade de Azevedo",
+      "cidade": "MANAUS"
+    }
+  },
   "veiculos": [
     {
       "id": "VEI-1792702378899",
@@ -11,12 +31,25 @@
       "cpf": "704.127.412-88",
       "login": "PHE1493",
       "senha": "123",
+      "cargo": "cliente",
       "criadoEm": "2026-10-22T20:52:58.899Z"
+    },
+    {
+      "id": "VEI-1793914194106",
+      "rfid": "123456",
+      "nome": "Stephanie",
+      "placa": "010203",
+      "contato": "(92) 98405-7576",
+      "cpf": "000.000.000-00",
+      "login": "010203",
+      "senha": "1234",
+      "cargo": "cliente",
+      "criadoEm": "2026-11-05T21:29:54.106Z"
     }
   ],
   "sessoes": [
     {
-      "id": "SES-1792702415225",
+      "id": "SES-1793915281745",
       "rfid": "123456789",
       "veiculo": {
         "nome": "Thiago Andrade",
@@ -24,12 +57,12 @@
         "contato": "(92) 98405-7576",
         "cpf": "704.127.412-88"
       },
-      "entrada": 1792702415225,
-      "saida": 1792702431142,
+      "entrada": 1793915281745,
+      "saida": 1793915285763,
       "status": "PAGO",
       "valorCobrado": 0,
-      "formaPagamento": "cartao_credito",
-      "historicoCalculo": "Tempo dentro do período de tolerância gratuita (10 min). Valor isento.",
+      "formaPagamento": "PIX",
+      "historicoCalculo": "Período de isenção gratuito (15 min). Valor isento.",
       "tempoMinutos": 1,
       "tempoFormatado": "1 min",
       "valorBase": 0,
@@ -40,7 +73,7 @@
       "observacoes": ""
     },
     {
-      "id": "SES-1792702471493",
+      "id": "SES-1793915328259",
       "rfid": "123456789",
       "veiculo": {
         "nome": "Thiago Andrade",
@@ -48,11 +81,59 @@
         "contato": "(92) 98405-7576",
         "cpf": "704.127.412-88"
       },
-      "entrada": 1792702471493,
-      "saida": 1792702516923,
-      "status": "CANCELADO",
+      "entrada": 1793915328259,
+      "saida": 1793915345089,
+      "status": "PAGO",
+      "valorCobrado": 9,
+      "formaPagamento": "PIX",
+      "historicoCalculo": "Permanência de até 30 minutos: R$ 5.00",
+      "tempoMinutos": 1,
+      "tempoFormatado": "1 min",
+      "valorBase": 5,
+      "desconto": 1,
+      "acrescimo": 5,
+      "valorRecebido": 9,
+      "troco": 0,
+      "observacoes": ""
+    },
+    {
+      "id": "SES-1793919484965",
+      "rfid": "123456789",
+      "veiculo": {
+        "nome": "Thiago Andrade",
+        "placa": "PHE1493",
+        "contato": "(92) 98405-7576",
+        "cpf": "704.127.412-88"
+      },
+      "entrada": 1793919484965,
+      "saida": 1793919586706,
+      "status": "PAGO",
+      "valorCobrado": 5,
+      "formaPagamento": "PIX",
+      "historicoCalculo": "Permanência de até 30 minutos: R$ 5.00",
+      "tempoMinutos": 2,
+      "tempoFormatado": "2 min",
+      "valorBase": 5,
+      "desconto": 0,
+      "acrescimo": 0,
+      "valorRecebido": 5,
+      "troco": 0,
+      "observacoes": ""
+    },
+    {
+      "id": "SES-1793919487342",
+      "rfid": "123456",
+      "veiculo": {
+        "nome": "Stephanie",
+        "placa": "010203",
+        "contato": "(92) 98405-7576",
+        "cpf": "000.000.000-00"
+      },
+      "entrada": 1793919487342,
+      "saida": null,
+      "status": "ESTACIONADO",
       "valorCobrado": null,
-      "formaPagamento": null,
+      "formaPagamento": "PIX",
       "historicoCalculo": null
     }
   ]
